@@ -1,0 +1,10 @@
+# DevEco/HarmonyOS 自动生成文件，提交仓库时忽略
+.hvigor/
+.idea/
+build/
+oh_modules/
+*.iml
+*.log
+local.properties
+.DS_Store
+Thumbs.db
