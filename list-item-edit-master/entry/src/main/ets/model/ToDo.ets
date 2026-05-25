@@ -26,6 +26,8 @@ export class ToDo {
   createdAt: number = Date.now();
   priority: number = 1;
   isCompleted: boolean = false;
+  focusCount: number = 0;
+  focusDurationMinutes: number = 0;
 
   /**
    * Creates a new instance of a to-do item.

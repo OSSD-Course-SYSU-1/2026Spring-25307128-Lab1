@@ -19,11 +19,10 @@ import { ToDo } from '../model/ToDo';
 @Component
 export struct ToDoListItem {
   UIContext = this.getUIContext()
-  @Link achieveData: ToDo[];
-  @Link toDoData: ToDo[];
   @ObjectLink toDoItem: ToDo;
   toggleTodoStatus: (item: ToDo) => void = () => {};
   deliverTodo: (item: ToDo) => void = () => {};
+  startFocus: (item: ToDo) => void = () => {};
   @State isEdited: boolean = false;
 
   /**
@@ -33,6 +32,26 @@ export struct ToDoListItem {
     this.UIContext.animateTo({ duration: STYLE_CONFIG.ANIMATION_DURATION }, () => {
       this.toggleTodoStatus(this.toDoItem);
     });
+  }
+
+  getPriorityText(): string {
+    if (this.toDoItem.priority >= 2) {
+      return '\u9AD8';
+    }
+    if (this.toDoItem.priority === 1) {
+      return '\u4E2D';
+    }
+    return '\u4F4E';
+  }
+
+  getPriorityColor(): string {
+    if (this.toDoItem.priority >= 2) {
+      return '#D94838';
+    }
+    if (this.toDoItem.priority === 1) {
+      return '#F57C00';
+    }
+    return '#1E8E3E';
   }
 
   build() {
@@ -66,6 +85,17 @@ export struct ToDoListItem {
             .fontSize($r('sys.float.ohos_id_text_size_headline9'))
             .layoutWeight(1)
             .decoration({ type: this.toDoItem.isCompleted ? TextDecorationType.LineThrough : TextDecorationType.None })
+          Text(this.getPriorityText())
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(Color.White)
+            .padding({
+              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+            })
+            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .backgroundColor(this.getPriorityColor())
         } else {
           TextInput({ text: `${this.toDoItem.name}` })
             .maxLines(1)
@@ -87,7 +117,10 @@ export struct ToDoListItem {
       .width(Constant.PERCENT_FULL)
 
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        Blank()
+        Text(`\u4E13\u6CE8 ${this.toDoItem.focusCount}\u6B21 / ${this.toDoItem.focusDurationMinutes}\u5206\u949F`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .layoutWeight(1)
         if (!this.isEdited) {
           Text(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210')
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
@@ -102,6 +135,20 @@ export struct ToDoListItem {
             .backgroundColor(this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'))
             .onClick(() => {
               this.addAchieveData();
+            })
+          Text('\u4E13\u6CE8')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(Color.White)
+            .padding({
+              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+            })
+            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .backgroundColor('#0A59F7')
+            .onClick(() => {
+              this.startFocus(this.toDoItem);
             })
           Text('\u6295\u9001')
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
