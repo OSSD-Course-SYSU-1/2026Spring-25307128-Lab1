@@ -23,13 +23,16 @@ import { util } from '@kit.ArkTS'
 export class ToDo {
   key: string = util.generateRandomUUID(true);
   name: string;
+  createdAt: number = Date.now();
+  priority: number = 1;
   isCompleted: boolean = false;
 
   /**
    * Creates a new instance of a to-do item.
    * @param {string} name - To-do item name.
    */
-  constructor(name: string) {
+  constructor(name: string, priority: number = 1) {
     this.name = name;
+    this.priority = priority;
   }
 }

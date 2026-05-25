@@ -22,23 +22,15 @@ export struct ToDoListItem {
   @Link achieveData: ToDo[];
   @Link toDoData: ToDo[];
   @ObjectLink toDoItem: ToDo;
+  toggleTodoStatus: (item: ToDo) => void = () => {};
   @State isEdited: boolean = false;
 
   /**
    * Add a completed data item.
    */
   addAchieveData() {
-    this.toDoItem.isCompleted = !this.toDoItem.isCompleted;
     this.UIContext.animateTo({ duration: STYLE_CONFIG.ANIMATION_DURATION }, () => {
-      if (this.toDoItem.isCompleted) {
-        let tempData = this.toDoData.filter(item => item.key !== this.toDoItem.key);
-        this.toDoData = tempData;
-        this.achieveData.push(this.toDoItem);
-      } else {
-        let tempData = this.achieveData.filter(item => item.key !== this.toDoItem.key);
-        this.achieveData = tempData;
-        this.toDoData.push(this.toDoItem);
-      }
+      this.toggleTodoStatus(this.toDoItem);
     });
   }
 
@@ -90,6 +82,22 @@ export struct ToDoListItem {
             })
         }
         Blank()
+        if (!this.isEdited) {
+          Text(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(Color.White)
+            .padding({
+              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+            })
+            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .backgroundColor(this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'))
+            .onClick(() => {
+              this.addAchieveData();
+            })
+        }
         if (this.isEdited) {
           Image($r('app.media.ic_public_ok_filled'))
             .width(STYLE_CONFIG.MENU_IMAGE_SIZE)
@@ -108,7 +116,7 @@ export struct ToDoListItem {
       .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
-    .height(STYLE_CONFIG.TODO_ITEM_HEIGHT)
+    .height(96)
     .padding({
       left: $r('sys.float.ohos_id_default_padding_start'),
       right: $r('sys.float.ohos_id_default_padding_end'),
