@@ -23,6 +23,7 @@ export struct ToDoListItem {
   @Link toDoData: ToDo[];
   @ObjectLink toDoItem: ToDo;
   toggleTodoStatus: (item: ToDo) => void = () => {};
+  deliverTodo: (item: ToDo) => void = () => {};
   @State isEdited: boolean = false;
 
   /**
@@ -35,7 +36,7 @@ export struct ToDoListItem {
   }
 
   build() {
-    Flex({ justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Center }) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
         if (!this.isEdited) {
           Row() {
@@ -82,6 +83,11 @@ export struct ToDoListItem {
             })
         }
         Blank()
+      }
+      .width(Constant.PERCENT_FULL)
+
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Blank()
         if (!this.isEdited) {
           Text(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210')
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
@@ -96,6 +102,20 @@ export struct ToDoListItem {
             .backgroundColor(this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'))
             .onClick(() => {
               this.addAchieveData();
+            })
+          Text('\u6295\u9001')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor('#182431')
+            .padding({
+              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+            })
+            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .backgroundColor('#F1F3F5')
+            .onClick(() => {
+              this.deliverTodo(this.toDoItem);
             })
         }
         if (this.isEdited) {
@@ -116,7 +136,7 @@ export struct ToDoListItem {
       .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
-    .height(96)
+    .height(112)
     .padding({
       left: $r('sys.float.ohos_id_default_padding_start'),
       right: $r('sys.float.ohos_id_default_padding_end'),
