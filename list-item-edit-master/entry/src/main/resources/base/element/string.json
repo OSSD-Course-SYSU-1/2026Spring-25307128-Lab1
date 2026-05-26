@@ -29,6 +29,10 @@
       "value": "To-Do List"
     },
     {
+      "name": "distributed_datasync_reason",
+      "value": "用于在可信 HarmonyOS 设备之间投送待办任务"
+    },
+    {
       "name": "undo",
       "value": "Ongoing"
     },

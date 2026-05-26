@@ -16,8 +16,49 @@
 import { ToDo } from '../model/ToDo';
 import { ToDoListItem } from '../view/TodoListItem';
 import { STYLE_CONFIG, Constant } from '../common/Constants';
+import { preferences } from '@kit.ArkData';
+import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import {
+  TaskTransferPayload,
+  TaskTransferService,
+  TransferDevice,
+  TransferTodoData
+} from '../service/TaskTransferService';
+
+interface StoredToDo {
+  key?: string;
+  name?: string;
+  createdAt?: number;
+  priority?: number;
+  isCompleted?: boolean;
+  focusCount?: number;
+  focusDurationMinutes?: number;
+}
+
+interface StoredAppState {
+  toDoData?: StoredToDo[];
+  score?: number;
+  petExp?: number;
+  themeIndex?: number;
+  unlockedThemes?: boolean[];
+  hasCheckedToday?: boolean;
+  lastCheckInDate?: string;
+  todayPomodoroCount?: number;
+  todayPomodoroDate?: string;
+  lastDeliveryRecord?: string;
+  realDeliveryStatus?: string;
+  lastRealSentTask?: string;
+  lastRealReceivedTask?: string;
+  lastDeliveryType?: string;
+  discoveredDeviceCount?: number;
+  receivedTransferIds?: string[];
+}
+
+const APP_STATE_PREFERENCES_NAME: string = 'todo_app_state_preferences';
+const APP_STATE_KEY: string = 'todo_app_state';
+const DISTRIBUTED_DATASYNC_PERMISSION: Permissions = 'ohos.permission.DISTRIBUTED_DATASYNC';
 
 @Extend(Image)
 function ImageStyle() {
@@ -31,10 +72,19 @@ function ImageStyle() {
 struct ToDoList {
   @State toDoData: ToDo[] = [];
   @State score: number = 0;
+  @State petExp: number = 0;
   @State themeIndex: number = 0;
   @State hasCheckedToday: boolean = false;
+  @State lastCheckInDate: string = '';
+  @State todayPomodoroCount: number = 0;
   @State unlockedThemes: boolean[] = [true, true, false, false, false, false];
   @State lastDeliveryRecord: string = '\u6682\u65E0\u6295\u9001\u8BB0\u5F55';
+  @State realDeliveryStatus: string = '\u771F\u5B9E\u6295\u9001\u672A\u5F00\u59CB';
+  @State lastRealSentTask: string = '\u6682\u65E0';
+  @State lastRealReceivedTask: string = '\u6682\u65E0';
+  @State lastDeliveryType: string = '\u771F\u5B9E\u6295\u9001';
+  @State discoveredDeviceCount: number = 0;
+  @State receivedTransferIds: string[] = [];
   @State searchKeyword: string = '';
   @State sortIndex: number = 0;
   @State isWideScreen: boolean = false;
@@ -44,6 +94,11 @@ struct ToDoList {
   @State isFocusRunning: boolean = false;
 
   private focusTimer: number = -1;
+  private appPreferences: preferences.Preferences | null = null;
+  private taskTransferService: TaskTransferService = new TaskTransferService();
+  private realDeliveryDevices: TransferDevice[] = [];
+  private hasInitializedTransfer: boolean = false;
+  private todayPomodoroDate: string = '';
   private themeNames: string[] = ['\u84DD\u8272', '\u7EFF\u8272', '\u7D2B\u8272', '\u6A59\u8272',
     '\u6A31\u82B1\u7C89', '\u661F\u7A7A\u9ED1'];
   private themeColors: string[] = ['#0A59F7', '#1E8E3E', '#7E3FF2', '#F57C00', '#E85D9E', '#222831'];
@@ -55,8 +110,235 @@ struct ToDoList {
   private focusMinuteNames: string[] = ['5\u5206\u949F', '15\u5206\u949F', '25\u5206\u949F'];
   private focusMinuteValues: number[] = [5, 15, 25];
 
+  aboutToAppear() {
+    this.startApp();
+  }
+
   aboutToDisappear() {
     this.clearFocusTimer();
+  }
+
+  async startApp(): Promise<void> {
+    await this.loadAppState();
+    await this.initTaskTransfer();
+  }
+
+  async ensurePreferences(): Promise<boolean> {
+    if (this.appPreferences !== null) {
+      return true;
+    }
+    let hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined) {
+      hilog.error(0x0000, 'Index', 'getHostContext failed while preparing preferences.');
+      return false;
+    }
+    try {
+      this.appPreferences = await preferences.getPreferences(hostContext, APP_STATE_PREFERENCES_NAME);
+      return true;
+    } catch (error) {
+      let err = error as BusinessError;
+      hilog.error(0x0000, 'Index', `getPreferences failed. error code=${err.code}, message=${err.message}`);
+      return false;
+    }
+  }
+
+  async loadAppState(): Promise<void> {
+    let hasPreferences = await this.ensurePreferences();
+    if (!hasPreferences || this.appPreferences === null) {
+      return;
+    }
+    try {
+      let storedValue = await this.appPreferences.get(APP_STATE_KEY, '');
+      if (typeof storedValue === 'string' && storedValue.length > 0) {
+        this.applyStoredAppState(JSON.parse(storedValue) as StoredAppState);
+      }
+    } catch (error) {
+      let err = error as BusinessError;
+      hilog.error(0x0000, 'Index', `load app state failed. error code=${err.code}, message=${err.message}`);
+    }
+    if (this.resetDailyStateIfNeeded()) {
+      this.saveAppState();
+    }
+  }
+
+  applyStoredAppState(storedState: StoredAppState) {
+    let storedTodos = storedState.toDoData;
+    if (Array.isArray(storedTodos)) {
+      this.toDoData = storedTodos.map((item: StoredToDo) => this.restoreTodo(item));
+    }
+    this.score = this.getStoredNumber(storedState.score, this.score);
+    let storedThemeIndex = this.getStoredNumber(storedState.themeIndex, this.themeIndex);
+    if (storedThemeIndex >= 0 && storedThemeIndex < this.themeNames.length) {
+      this.themeIndex = storedThemeIndex;
+    }
+    let storedThemes = storedState.unlockedThemes;
+    if (Array.isArray(storedThemes)) {
+      let updatedThemes = [...this.unlockedThemes];
+      storedThemes.forEach((isUnlocked: boolean, index: number) => {
+        if (index < updatedThemes.length && typeof isUnlocked === 'boolean') {
+          updatedThemes[index] = isUnlocked;
+        }
+      });
+      updatedThemes[0] = true;
+      updatedThemes[1] = true;
+      this.unlockedThemes = updatedThemes;
+    }
+    this.hasCheckedToday = this.getStoredBoolean(storedState.hasCheckedToday, this.hasCheckedToday);
+    this.lastCheckInDate = this.getStoredString(storedState.lastCheckInDate, this.lastCheckInDate);
+    this.todayPomodoroCount = this.getStoredNumber(storedState.todayPomodoroCount, this.todayPomodoroCount);
+    this.todayPomodoroDate = this.getStoredString(storedState.todayPomodoroDate, this.lastCheckInDate);
+    this.lastDeliveryRecord = this.getStoredString(storedState.lastDeliveryRecord, this.lastDeliveryRecord);
+    this.realDeliveryStatus = this.getStoredString(storedState.realDeliveryStatus, this.realDeliveryStatus);
+    this.lastRealSentTask = this.getStoredString(storedState.lastRealSentTask, this.lastRealSentTask);
+    this.lastRealReceivedTask = this.getStoredString(storedState.lastRealReceivedTask, this.lastRealReceivedTask);
+    this.lastDeliveryType = this.getStoredString(storedState.lastDeliveryType, this.lastDeliveryType);
+    this.discoveredDeviceCount = Math.max(0, this.getStoredNumber(storedState.discoveredDeviceCount,
+      this.discoveredDeviceCount));
+    let storedTransferIds = storedState.receivedTransferIds;
+    if (Array.isArray(storedTransferIds)) {
+      this.receivedTransferIds = storedTransferIds.filter((transferId: string) => transferId.length > 0);
+    }
+    this.petExp = this.getInitialPetExp(storedState.petExp);
+  }
+
+  restoreTodo(item: StoredToDo): ToDo {
+    let todoName = this.getStoredString(item.name, 'Task');
+    let priority = this.normalizePriority(this.getStoredNumber(item.priority, 1));
+    return ToDo.fromStorage(
+      this.getStoredString(item.key, ''),
+      todoName.length > 0 ? todoName : 'Task',
+      this.getStoredNumber(item.createdAt, Date.now()),
+      priority,
+      this.getStoredBoolean(item.isCompleted, false),
+      Math.max(0, this.getStoredNumber(item.focusCount, 0)),
+      Math.max(0, this.getStoredNumber(item.focusDurationMinutes, 0))
+    );
+  }
+
+  getStoredNumber(value: number | undefined, defaultValue: number): number {
+    if (typeof value === 'number') {
+      return value;
+    }
+    return defaultValue;
+  }
+
+  getStoredString(value: string | undefined, defaultValue: string): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+    return defaultValue;
+  }
+
+  getStoredBoolean(value: boolean | undefined, defaultValue: boolean): boolean {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    return defaultValue;
+  }
+
+  normalizePriority(priority: number): number {
+    let normalizedPriority = Math.round(priority);
+    if (normalizedPriority < 0) {
+      return 0;
+    }
+    if (normalizedPriority > 2) {
+      return 2;
+    }
+    return normalizedPriority;
+  }
+
+  getInitialPetExp(storedPetExp: number | undefined): number {
+    let taskGrowth = this.getCompletedCount() * 10 + this.getTotalFocusCount() * 15 + (this.hasCheckedToday ? 20 : 0);
+    if (typeof storedPetExp === 'number') {
+      return Math.max(storedPetExp, this.score, taskGrowth);
+    }
+    return Math.max(this.score, taskGrowth);
+  }
+
+  resetDailyStateIfNeeded(): boolean {
+    let today = this.getTodayString();
+    let hasChanged = false;
+    if (this.lastCheckInDate !== today && this.hasCheckedToday) {
+      this.hasCheckedToday = false;
+      hasChanged = true;
+    }
+    if (this.todayPomodoroDate !== today) {
+      if (this.todayPomodoroCount !== 0) {
+        this.todayPomodoroCount = 0;
+      }
+      this.todayPomodoroDate = today;
+      hasChanged = true;
+    }
+    return hasChanged;
+  }
+
+  async saveAppState(): Promise<void> {
+    let hasPreferences = await this.ensurePreferences();
+    if (!hasPreferences || this.appPreferences === null) {
+      return;
+    }
+    try {
+      await this.appPreferences.put(APP_STATE_KEY, JSON.stringify(this.buildStoredAppState()));
+      await this.appPreferences.flush();
+    } catch (error) {
+      let err = error as BusinessError;
+      hilog.error(0x0000, 'Index', `save app state failed. error code=${err.code}, message=${err.message}`);
+    }
+  }
+
+  buildStoredAppState(): StoredAppState {
+    return {
+      toDoData: this.toDoData.map((item: ToDo) => this.buildStoredToDo(item)),
+      score: this.score,
+      petExp: this.petExp,
+      themeIndex: this.themeIndex,
+      unlockedThemes: [...this.unlockedThemes],
+      hasCheckedToday: this.hasCheckedToday,
+      lastCheckInDate: this.lastCheckInDate,
+      todayPomodoroCount: this.todayPomodoroCount,
+      todayPomodoroDate: this.todayPomodoroDate,
+      lastDeliveryRecord: this.lastDeliveryRecord,
+      realDeliveryStatus: this.realDeliveryStatus,
+      lastRealSentTask: this.lastRealSentTask,
+      lastRealReceivedTask: this.lastRealReceivedTask,
+      lastDeliveryType: this.lastDeliveryType,
+      discoveredDeviceCount: this.discoveredDeviceCount,
+      receivedTransferIds: [...this.receivedTransferIds]
+    };
+  }
+
+  buildStoredToDo(item: ToDo): StoredToDo {
+    return {
+      key: item.key,
+      name: item.name,
+      createdAt: item.createdAt,
+      priority: item.priority,
+      isCompleted: item.isCompleted,
+      focusCount: item.focusCount,
+      focusDurationMinutes: item.focusDurationMinutes
+    };
+  }
+
+  getTodayString(): string {
+    let currentDate = new Date();
+    let month = currentDate.getMonth() + 1;
+    let date = currentDate.getDate();
+    let monthText = month < 10 ? `0${month}` : `${month}`;
+    let dateText = date < 10 ? `0${date}` : `${date}`;
+    return `${currentDate.getFullYear()}-${monthText}-${dateText}`;
+  }
+
+  formatDateTime(timestamp: number): string {
+    let dateValue = new Date(timestamp);
+    let month = dateValue.getMonth() + 1;
+    let date = dateValue.getDate();
+    let hour = dateValue.getHours();
+    let minute = dateValue.getMinutes();
+    let monthText = month < 10 ? `0${month}` : `${month}`;
+    let dateText = date < 10 ? `0${date}` : `${date}`;
+    let hourText = hour < 10 ? `0${hour}` : `${hour}`;
+    let minuteText = minute < 10 ? `0${minute}` : `${minute}`;
+    return `${dateValue.getFullYear()}-${monthText}-${dateText} ${hourText}:${minuteText}`;
   }
 
   getTotalCount(): number {
@@ -91,84 +373,104 @@ struct ToDoList {
     return this.themeLightColors[this.themeIndex];
   }
 
+  addGrowthReward(scoreValue: number) {
+    this.score += scoreValue;
+    this.petExp += scoreValue;
+  }
+
   getPetName(): string {
-    if (this.score >= 800) {
-      return '\u4E13\u6CE8\u5B88\u62A4\u8005';
+    if (this.petExp >= 700) {
+      return '\u5B66\u4E60\u795E\u9F99';
     }
-    if (this.score >= 450) {
-      return '\u81EA\u5F8B\u4F19\u4F34';
+    if (this.petExp >= 400) {
+      return '\u667A\u6167\u5C0F\u72D0';
     }
-    if (this.score >= 200) {
-      return '\u6D3B\u529B\u5B66\u5F92';
+    if (this.petExp >= 200) {
+      return '\u4E13\u6CE8\u5C0F\u718A';
     }
-    if (this.score >= 80) {
-      return '\u840C\u65B0\u5C0F\u4F34';
+    if (this.petExp >= 100) {
+      return '\u52AA\u529B\u5C0F\u732B';
+    }
+    if (this.petExp >= 50) {
+      return '\u5B66\u4E60\u5E7C\u5D3D';
     }
     return '\u5B66\u4E60\u86CB';
   }
 
   getPetEmoji(): string {
-    if (this.score >= 800) {
+    if (this.petExp >= 700) {
       return '\uD83D\uDC32';
     }
-    if (this.score >= 450) {
-      return '\uD83D\uDC09';
-    }
-    if (this.score >= 200) {
+    if (this.petExp >= 400) {
       return '\uD83E\uDD8A';
     }
-    if (this.score >= 80) {
+    if (this.petExp >= 200) {
+      return '\uD83D\uDC3B';
+    }
+    if (this.petExp >= 100) {
       return '\uD83D\uDC31';
+    }
+    if (this.petExp >= 50) {
+      return '\uD83D\uDC23';
     }
     return '\uD83E\uDD5A';
   }
 
   getPetLevel(): number {
-    if (this.score >= 800) {
+    if (this.petExp >= 700) {
+      return 6;
+    }
+    if (this.petExp >= 400) {
       return 5;
     }
-    if (this.score >= 450) {
+    if (this.petExp >= 200) {
       return 4;
     }
-    if (this.score >= 200) {
+    if (this.petExp >= 100) {
       return 3;
     }
-    if (this.score >= 80) {
+    if (this.petExp >= 50) {
       return 2;
     }
     return 1;
   }
 
   getCurrentLevelScore(): number {
-    if (this.score >= 800) {
-      return 800;
+    if (this.petExp >= 700) {
+      return 700;
     }
-    if (this.score >= 450) {
-      return 450;
+    if (this.petExp >= 400) {
+      return 400;
     }
-    if (this.score >= 200) {
+    if (this.petExp >= 200) {
       return 200;
     }
-    if (this.score >= 80) {
-      return 80;
+    if (this.petExp >= 100) {
+      return 100;
+    }
+    if (this.petExp >= 50) {
+      return 50;
     }
     return 0;
   }
 
   getNextLevelScore(): number {
-    if (this.score >= 800) {
-      return 800;
+    if (this.petExp >= 700) {
+      return 700;
     }
-    if (this.score >= 450) {
-      return 800;
+    if (this.petExp >= 400) {
+      return 700;
     }
-    if (this.score >= 200) {
-      return 450;
+    if (this.petExp >= 200) {
+      return 400;
     }
-    if (this.score >= 80) {
+    if (this.petExp >= 100) {
       return 200;
     }
-    return 80;
+    if (this.petExp >= 50) {
+      return 100;
+    }
+    return 50;
   }
 
   getPetProgress(): number {
@@ -177,17 +479,28 @@ struct ToDoList {
     if (nextLevelScore === currentLevelScore) {
       return 100;
     }
-    return Math.round((this.score - currentLevelScore) * 100 / (nextLevelScore - currentLevelScore));
+    return Math.round((this.petExp - currentLevelScore) * 100 / (nextLevelScore - currentLevelScore));
+  }
+
+  getPetExpToNextLevel(): number {
+    let nextLevelScore = this.getNextLevelScore();
+    if (nextLevelScore <= this.petExp) {
+      return 0;
+    }
+    return nextLevelScore - this.petExp;
   }
 
   getPetStatusText(): string {
+    if (this.petExp >= 700) {
+      return '\u5DF2\u6210\u4E3A\u5B66\u4E60\u795E\u9F99\uFF0C\u7EE7\u7EED\u4FDD\u6301\u8282\u594F';
+    }
     if (this.getTotalFocusMinutes() >= 120) {
-      return '\u4E13\u6CE8\u5145\u6C9B';
+      return '\u4E13\u6CE8\u4E4B\u529B\u6B63\u5728\u5E2E\u5B83\u98DE\u5FEB\u6210\u957F';
     }
     if (this.getCompletedCount() > 0) {
-      return '\u7A33\u6B65\u6210\u957F';
+      return '\u6BCF\u5B8C\u6210\u4E00\u4EF6\u5C0F\u4E8B\uFF0C\u5B83\u90FD\u4F1A\u66F4\u6709\u7CBE\u795E';
     }
-    return '\u7B49\u5F85\u966A\u4F34';
+    return '\u4ECE\u4E00\u4E2A\u5C0F\u4EFB\u52A1\u5F00\u59CB\uFF0C\u966A\u5B83\u6162\u6162\u957F\u5927';
   }
 
   getTotalFocusMinutes(): number {
@@ -249,6 +562,7 @@ struct ToDoList {
           .getStringArrayValueSync($r('app.strarray.available_things').id);
         if (availableThings) {
           this.toDoData = [new ToDo(availableThings[Number(value.index)], priority), ...this.toDoData];
+          this.saveAppState();
         }
       },
     });
@@ -262,6 +576,7 @@ struct ToDoList {
         item.priority = Number(value.index);
         this.toDoData = [...this.toDoData];
         this.showToastMessage('\u4F18\u5148\u7EA7\u5DF2\u66F4\u65B0');
+        this.saveAppState();
       },
     });
   }
@@ -341,13 +656,21 @@ struct ToDoList {
       return todoItem;
     });
     if (hasFocusTask) {
-      this.score += 15;
+      this.addGrowthReward(15);
+      if (this.todayPomodoroDate !== this.getTodayString()) {
+        this.todayPomodoroDate = this.getTodayString();
+        this.todayPomodoroCount = 0;
+      }
+      this.todayPomodoroCount += 1;
     }
     this.focusTaskKey = '';
     this.focusRemainingSeconds = 0;
     this.focusTotalSeconds = 0;
     this.isFocusRunning = false;
     this.showToastMessage(hasFocusTask ? '\u4E13\u6CE8\u5B8C\u6210\uFF0C\u79EF\u5206 +15' : '\u4E13\u6CE8\u5DF2\u7ED3\u675F');
+    if (hasFocusTask) {
+      this.saveAppState();
+    }
   }
 
   getFocusTaskName(): string {
@@ -381,10 +704,21 @@ struct ToDoList {
       return todoItem;
     });
     if (item.isCompleted) {
-      this.score += 10;
+      this.addGrowthReward(10);
     } else {
       this.score = Math.max(0, this.score - 10);
     }
+    this.saveAppState();
+  }
+
+  updateTodoItem(item: ToDo) {
+    this.toDoData = this.toDoData.map((todoItem: ToDo) => {
+      if (todoItem.key === item.key) {
+        return item;
+      }
+      return todoItem;
+    });
+    this.saveAppState();
   }
 
   showToastMessage(message: string) {
@@ -397,18 +731,24 @@ struct ToDoList {
   }
 
   checkInToday() {
+    if (this.resetDailyStateIfNeeded()) {
+      this.saveAppState();
+    }
     if (this.hasCheckedToday) {
       this.showToastMessage('\u4ECA\u65E5\u5DF2\u6253\u5361');
       return;
     }
     this.hasCheckedToday = true;
-    this.score += 20;
+    this.lastCheckInDate = this.getTodayString();
+    this.addGrowthReward(20);
     this.showToastMessage('\u6253\u5361\u6210\u529F\uFF0C\u79EF\u5206 +20');
+    this.saveAppState();
   }
 
   handleThemeTap(index: number) {
     if (this.unlockedThemes[index]) {
       this.themeIndex = index;
+      this.saveAppState();
       return;
     }
     let price = this.themePrices[index];
@@ -422,16 +762,228 @@ struct ToDoList {
     this.score -= price;
     this.themeIndex = index;
     this.showToastMessage('\u4E3B\u9898\u5DF2\u89E3\u9501');
+    this.saveAppState();
+  }
+
+  async initTaskTransfer(): Promise<void> {
+    if (this.hasInitializedTransfer) {
+      return;
+    }
+    let hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined) {
+      return;
+    }
+    try {
+      await this.taskTransferService.init(hostContext as common.UIAbilityContext, (payload: TaskTransferPayload) => {
+        this.receiveRemoteTask(payload);
+      });
+      this.hasInitializedTransfer = true;
+    } catch (error) {
+      let err = error as BusinessError;
+      hilog.error(0x0000, 'Index', `init task transfer failed. error code=${err.code}, message=${err.message}`);
+      this.realDeliveryStatus = `\u771F\u5B9E\u6295\u9001\u521D\u59CB\u5316\u5931\u8D25\uFF1A${err.message}`;
+      this.saveAppState();
+    }
+  }
+
+  async ensureDistributedDataSyncPermission(): Promise<boolean> {
+    let hostContext = this.getUIContext().getHostContext();
+    if (hostContext === undefined) {
+      this.realDeliveryStatus = '\u53D1\u9001\u5931\u8D25\uFF1A\u65E0\u6CD5\u83B7\u53D6\u5E94\u7528\u4E0A\u4E0B\u6587';
+      this.showToastMessage('\u65E0\u6CD5\u83B7\u53D6\u5E94\u7528\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u80FD\u8FDB\u884C\u771F\u5B9E\u6295\u9001');
+      this.saveAppState();
+      return false;
+    }
+    let abilityContext = hostContext as common.UIAbilityContext;
+    try {
+      let atManager = abilityAccessCtrl.createAtManager();
+      let grantStatus = await atManager.checkAccessToken(abilityContext.applicationInfo.accessTokenId,
+        DISTRIBUTED_DATASYNC_PERMISSION);
+      if (grantStatus === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        return true;
+      }
+      let requestResult = await atManager.requestPermissionsFromUser(abilityContext, [DISTRIBUTED_DATASYNC_PERMISSION]);
+      if (requestResult.authResults.length > 0 &&
+        requestResult.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+        return true;
+      }
+      this.realDeliveryStatus = '\u53D1\u9001\u5931\u8D25\uFF1A\u672A\u6388\u4E88\u5206\u5E03\u5F0F\u6570\u636E\u540C\u6B65\u6743\u9650';
+      this.showToastMessage('\u672A\u6388\u4E88\u5206\u5E03\u5F0F\u6570\u636E\u540C\u6B65\u6743\u9650\uFF0C\u65E0\u6CD5\u8FDB\u884C\u771F\u5B9E\u6295\u9001');
+      this.saveAppState();
+      return false;
+    } catch (error) {
+      let err = error as BusinessError;
+      if (err.code === 12100011) {
+        return true;
+      }
+      this.realDeliveryStatus = `\u53D1\u9001\u5931\u8D25\uFF1A\u6743\u9650\u7533\u8BF7\u5931\u8D25 ${err.message}`;
+      this.showToastMessage('\u5206\u5E03\u5F0F\u6570\u636E\u540C\u6B65\u6743\u9650\u7533\u8BF7\u5931\u8D25\uFF0C\u65E0\u6CD5\u8FDB\u884C\u771F\u5B9E\u6295\u9001');
+      this.saveAppState();
+      return false;
+    }
   }
 
   showDeliveryPicker(item: ToDo) {
+    AlertDialog.show({
+      title: '\u6295\u9001\u4EFB\u52A1',
+      message: '\u9009\u62E9\u771F\u5B9E\u8DE8\u8BBE\u5907\u6295\u9001\uFF0C\u6216\u4EC5\u4FDD\u7559\u4E00\u6761\u672C\u5730\u6A21\u62DF\u8BB0\u5F55\u3002',
+      primaryButton: {
+        value: '\u771F\u5B9E\u6295\u9001',
+        action: () => {
+          this.showRealDeliveryDevicePicker(item);
+        }
+      },
+      secondaryButton: {
+        value: '\u6A21\u62DF\u8BB0\u5F55',
+        action: () => {
+          this.showMockDeliveryPicker(item);
+        }
+      }
+    });
+  }
+
+  showMockDeliveryPicker(item: ToDo) {
     this.getUIContext().showTextPickerDialog({
       range: this.deliveryDevices,
       onAccept: (value: TextPickerResult) => {
         let deviceName = this.deliveryDevices[Number(value.index)];
-        this.lastDeliveryRecord = `${item.name} \u2192 ${deviceName}`;
-        this.showToastMessage(`\u5DF2\u6295\u9001\u5230${deviceName}`);
+        this.lastDeliveryType = '\u6A21\u62DF\u8BB0\u5F55';
+        this.lastDeliveryRecord = `\u6A21\u62DF\u8BB0\u5F55\uFF1A${item.name} \u2192 ${deviceName}\uFF08\u4E0D\u4EE3\u8868\u771F\u5B9E\u6295\u9001\u6210\u529F\uFF09`;
+        this.realDeliveryStatus = '\u6A21\u62DF\u8BB0\u5F55\u5DF2\u4FDD\u7559\uFF0C\u672A\u8FDB\u884C\u771F\u5B9E\u8DE8\u8BBE\u5907\u540C\u6B65';
+        this.showToastMessage('\u5DF2\u4FDD\u7559\u6A21\u62DF\u8BB0\u5F55\uFF0C\u8FD9\u4E0D\u662F\u771F\u5B9E\u6295\u9001');
+        this.saveAppState();
       },
+    });
+  }
+
+  async showRealDeliveryDevicePicker(item: ToDo): Promise<void> {
+    let hasPermission = await this.ensureDistributedDataSyncPermission();
+    if (!hasPermission) {
+      return;
+    }
+    await this.initTaskTransfer();
+    if (!this.hasInitializedTransfer) {
+      this.showToastMessage('\u771F\u5B9E\u6295\u9001\u521D\u59CB\u5316\u5931\u8D25\uFF0C\u6682\u65F6\u65E0\u6CD5\u6295\u9001');
+      return;
+    }
+    this.realDeliveryStatus = '\u53D1\u9001\u4E2D\uFF1A\u6B63\u5728\u67E5\u627E\u53EF\u7528\u8BBE\u5907';
+    this.saveAppState();
+    try {
+      let devices = await this.taskTransferService.getAvailableDevices();
+      this.discoveredDeviceCount = devices.length;
+      if (devices.length === 0) {
+        this.lastDeliveryType = '\u771F\u5B9E\u6295\u9001';
+        this.realDeliveryStatus = '\u53D1\u9001\u5931\u8D25\uFF1A\u672A\u53D1\u73B0\u53EF\u4FE1\u8BBE\u5907';
+        this.showNoTrustedDeviceDialog();
+        this.saveAppState();
+        return;
+      }
+      this.realDeliveryDevices = devices;
+      this.getUIContext().showTextPickerDialog({
+        range: devices.map((device: TransferDevice) => device.displayName),
+        onAccept: (value: TextPickerResult) => {
+          let selectedDevice = this.realDeliveryDevices[Number(value.index)];
+          if (selectedDevice !== undefined) {
+            this.sendRealTask(item, selectedDevice);
+          }
+        }
+      });
+    } catch (error) {
+      let err = error as BusinessError;
+      this.realDeliveryStatus = `\u53D1\u9001\u5931\u8D25\uFF1A${err.message}`;
+      this.showToastMessage('\u83B7\u53D6\u771F\u5B9E\u8BBE\u5907\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6743\u9650\u548C\u8BBE\u5907\u8FDE\u63A5');
+      this.saveAppState();
+    }
+  }
+
+  showNoTrustedDeviceDialog() {
+    AlertDialog.show({
+      title: '\u672A\u53D1\u73B0\u53EF\u4FE1\u8BBE\u5907',
+      message: '\u672A\u53D1\u73B0\u53EF\u4FE1\u8BBE\u5907\u3002\n\u8BF7\u786E\u8BA4\u4E24\u53F0\u8BBE\u5907\u5F00\u542F\u84DD\u7259/Wi-Fi\u3002\n\u8BF7\u786E\u8BA4\u767B\u5F55\u540C\u4E00\u534E\u4E3A\u8D26\u53F7\u6216\u5DF2\u5EFA\u7ACB\u53EF\u4FE1\u5173\u7CFB\u3002',
+      primaryButton: {
+        value: '\u6211\u77E5\u9053\u4E86',
+        action: () => {
+        }
+      }
+    });
+  }
+
+  async sendRealTask(item: ToDo, targetDevice: TransferDevice): Promise<void> {
+    this.realDeliveryStatus = `\u53D1\u9001\u4E2D\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+    this.lastDeliveryType = '\u771F\u5B9E\u6295\u9001';
+    this.lastRealSentTask = `${item.name} \u2192 ${targetDevice.displayName}`;
+    this.lastDeliveryRecord = this.realDeliveryStatus;
+    this.saveAppState();
+    try {
+      await this.taskTransferService.sendTask(targetDevice, this.buildTaskTransferPayload(item));
+      this.realDeliveryStatus = `\u540C\u6B65\u5DF2\u53D1\u8D77\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+      this.lastDeliveryRecord = this.realDeliveryStatus;
+      this.showToastMessage('\u5DF2\u5199\u5165\u672C\u5730KV\u5E76\u53D1\u8D77\u540C\u6B65\uFF0C\u4E0D\u4EE3\u8868\u76EE\u6807\u8BBE\u5907\u5DF2\u6536\u5230');
+    } catch (error) {
+      let err = error as BusinessError;
+      this.realDeliveryStatus = `\u53D1\u9001\u5931\u8D25\uFF1A${err.message}`;
+      this.lastDeliveryRecord = `\u53D1\u9001\u5931\u8D25\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+      this.showToastMessage('\u771F\u5B9E\u6295\u9001\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u8BBE\u5907\u4FE1\u4EFB\u548C\u6743\u9650');
+    }
+    this.saveAppState();
+  }
+
+  buildTaskTransferPayload(item: ToDo): TaskTransferPayload {
+    let taskData: TransferTodoData = {
+      key: item.key,
+      name: item.name,
+      createdAt: item.createdAt,
+      priority: item.priority,
+      isCompleted: item.isCompleted,
+      focusCount: item.focusCount,
+      focusDurationMinutes: item.focusDurationMinutes
+    };
+    return {
+      transferId: this.taskTransferService.buildTransferId(),
+      sourceDeviceId: this.taskTransferService.getLocalDeviceId(),
+      sourceDeviceName: this.taskTransferService.getLocalDeviceName(),
+      sentAt: Date.now(),
+      task: taskData
+    };
+  }
+
+  receiveRemoteTask(payload: TaskTransferPayload) {
+    if (this.receivedTransferIds.includes(payload.transferId)) {
+      return;
+    }
+    let remoteTask = ToDo.fromStorage(
+      '',
+      payload.task.name,
+      Date.now(),
+      this.normalizePriority(payload.task.priority),
+      false,
+      Math.max(0, payload.task.focusCount),
+      Math.max(0, payload.task.focusDurationMinutes)
+    );
+    this.toDoData = [remoteTask, ...this.toDoData];
+    this.receivedTransferIds = [payload.transferId, ...this.receivedTransferIds].slice(0, 100);
+    this.lastDeliveryType = '\u771F\u5B9E\u6295\u9001';
+    this.lastRealReceivedTask = payload.task.name;
+    this.realDeliveryStatus = `\u5DF2\u63A5\u6536\uFF1A${payload.task.name}`;
+    this.lastDeliveryRecord = this.realDeliveryStatus;
+    this.showToastMessage(`\u5DF2\u63A5\u6536\u8DE8\u8BBE\u5907\u4EFB\u52A1\uFF1A${payload.task.name}`);
+    this.saveAppState();
+  }
+
+  showTodoDetail(item: ToDo) {
+    AlertDialog.show({
+      title: '\u4EFB\u52A1\u8BE6\u60C5',
+      message: `\u4EFB\u52A1\u540D\u79F0\uFF1A${item.name}\n` +
+        `\u4F18\u5148\u7EA7\uFF1A${this.getPriorityName(item.priority)}\n` +
+        `\u5B8C\u6210\u72B6\u6001\uFF1A${item.isCompleted ? '\u5DF2\u5B8C\u6210' : '\u672A\u5B8C\u6210'}\n` +
+        `\u521B\u5EFA\u65F6\u95F4\uFF1A${this.formatDateTime(item.createdAt)}\n` +
+        `\u4E13\u6CE8\u6B21\u6570\uFF1A${item.focusCount}\u6B21\n` +
+        `\u4E13\u6CE8\u65F6\u957F\uFF1A${item.focusDurationMinutes}\u5206\u949F`,
+      primaryButton: {
+        value: '\u5173\u95ED',
+        action: () => {
+        }
+      }
     });
   }
 
@@ -441,6 +993,7 @@ struct ToDoList {
   deleteTodoItem(item: ToDo) {
     this.toDoData = this.toDoData.filter(todoItem => item.key !== todoItem.key);
     this.showToastMessage('\u5DF2\u5220\u9664');
+    this.saveAppState();
   }
 
   confirmDeleteItem(item: ToDo) {
@@ -542,18 +1095,43 @@ struct ToDoList {
       this.sectionTitle('\u5BA0\u7269\u6210\u957F')
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         Text(this.getPetEmoji())
-          .fontSize(44)
+          .fontSize(52)
         Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
           Text(`Lv.${this.getPetLevel()} ${this.getPetName()}`)
             .fontSize($r('sys.float.ohos_id_text_size_headline8'))
             .fontColor(this.getThemeColor())
-          Text(`${this.getPetStatusText()} \u00B7 \u79EF\u5206 ${this.score}`)
+          Text(this.getPetStatusText())
             .fontSize($r('sys.float.ohos_id_text_size_body1'))
             .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .maxLines(2)
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
       }
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text(`${this.score}`)
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(this.getThemeColor())
+          Text('\u5F53\u524D\u79EF\u5206')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text(`${this.petExp}`)
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(this.getThemeColor())
+          Text('\u5BA0\u7269\u6210\u957F\u503C')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width(Constant.PERCENT_FULL)
       Row() {
         Row()
           .height(8)
@@ -566,15 +1144,20 @@ struct ToDoList {
       .borderRadius(4)
       .backgroundColor(Color.White)
       Row() {
-        Text(`\u4E0B\u4E00\u7EA7 ${this.getPetProgress()}%`)
+        Text(this.getPetExpToNextLevel() === 0 ? '\u5DF2\u8FBE\u5230\u5F53\u524D\u6700\u9AD8\u7B49\u7EA7' :
+          `\u8DDD\u79BB\u4E0B\u4E00\u7EA7\u8FD8\u5DEE ${this.getPetExpToNextLevel()}\u6210\u957F\u503C`)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor($r('sys.color.ohos_id_color_text_secondary'))
           .layoutWeight(1)
-        Text(`\u4E13\u6CE8 ${this.getTotalFocusCount()}\u6B21 / ${this.getTotalFocusMinutes()}\u5206\u949F`)
+        Text(`${this.getPetProgress()}%`)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .fontColor(this.getThemeColor())
       }
       .width(Constant.PERCENT_FULL)
+      Text(`\u4E13\u6CE8 ${this.getTotalFocusCount()}\u6B21 / ${this.getTotalFocusMinutes()}\u5206\u949F`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
@@ -722,11 +1305,79 @@ struct ToDoList {
 
   @Builder
   deliveryRecordCard() {
-    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      this.sectionTitle('\u6700\u8FD1\u6295\u9001')
-      Text(this.lastDeliveryRecord)
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.sectionTitle('\u8DE8\u8BBE\u5907\u6295\u9001\u72B6\u6001')
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(this.lastDeliveryType)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .padding({
+            left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor(this.lastDeliveryType === '\u6A21\u62DF\u8BB0\u5F55' ? '#8A8A8A' : this.getThemeColor())
+        Text(`\u5F53\u524D\u53D1\u73B0\u8BBE\u5907\u6570\uFF1A${this.discoveredDeviceCount}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .layoutWeight(1)
+      }
+      .width(Constant.PERCENT_FULL)
+      Text(this.realDeliveryStatus)
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(this.getThemeColor())
+        .width(Constant.PERCENT_FULL)
+      this.deliveryStatusRow('\u6700\u8FD1\u53D1\u9001\u4EFB\u52A1', this.lastRealSentTask)
+      this.deliveryStatusRow('\u6700\u8FD1\u63A5\u6536\u4EFB\u52A1', this.lastRealReceivedTask)
+      this.deliveryStatusRow('\u6700\u8FD1\u8BB0\u5F55', this.lastDeliveryRecord)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  deliveryStatusRow(label: string, value: string) {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .width(116)
+      Text(value)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .layoutWeight(1)
+        .maxLines(2)
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  deviceTestGuideCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.sectionTitle('\u771F\u673A\u6295\u9001\u6D4B\u8BD5\u6307\u5F15')
+      Text('1\uFF09\u4E24\u53F0\u8BBE\u5907\u5F00\u542F\u84DD\u7259/Wi-Fi')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text('2\uFF09\u767B\u5F55\u540C\u4E00\u534E\u4E3A\u8D26\u53F7\u6216\u5EFA\u7ACB\u53EF\u4FE1\u5173\u7CFB')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text('3\uFF09\u8BBE\u5907B\u5148\u6253\u5F00App')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text('4\uFF09\u8BBE\u5907A\u9009\u62E9\u4EFB\u52A1\u5E76\u70B9\u51FB\u771F\u5B9E\u6295\u9001')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text('5\uFF09\u8BBE\u5907B\u6536\u5230\u540E\u4F1A\u52A0\u5165\u5F85\u529E\u5217\u8868')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
         .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
@@ -748,6 +1399,7 @@ struct ToDoList {
       this.statisticsPanel()
       this.themeStore()
       this.deliveryRecordCard()
+      this.deviceTestGuideCard()
     }
     .width(Constant.PERCENT_FULL)
   }
@@ -847,6 +1499,12 @@ struct ToDoList {
               },
               startFocus: (item: ToDo) => {
                 this.showFocusPicker(item);
+              },
+              showTodoDetail: (item: ToDo) => {
+                this.showTodoDetail(item);
+              },
+              updateTodoItem: (item: ToDo) => {
+                this.updateTodoItem(item);
               }
             })
           }
@@ -871,7 +1529,7 @@ struct ToDoList {
         })
       Image($r('app.media.ic_public_detail_filled')).ImageStyle()
         .onClick(() => {
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.incomplete') });
+          this.showTodoDetail(item);
         })
       Image($r('app.media.ic_public_delete_filled')).ImageStyle()
         .onClick(() => {
@@ -980,6 +1638,12 @@ struct ToDoList {
                 },
                 startFocus: (item: ToDo) => {
                   this.showFocusPicker(item);
+                },
+                showTodoDetail: (item: ToDo) => {
+                  this.showTodoDetail(item);
+                },
+                updateTodoItem: (item: ToDo) => {
+                  this.updateTodoItem(item);
                 }
               })
             }
@@ -1000,6 +1664,10 @@ struct ToDoList {
 
           ListItem() {
             this.deliveryRecordCard()
+          }
+
+          ListItem() {
+            this.deviceTestGuideCard()
           }
         }
         .layoutWeight(1)

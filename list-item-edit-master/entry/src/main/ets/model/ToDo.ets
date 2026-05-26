@@ -37,4 +37,17 @@ export class ToDo {
     this.name = name;
     this.priority = priority;
   }
+
+  static fromStorage(key: string, name: string, createdAt: number, priority: number, isCompleted: boolean,
+    focusCount: number, focusDurationMinutes: number): ToDo {
+    let todoItem = new ToDo(name, priority);
+    if (key.length > 0) {
+      todoItem.key = key;
+    }
+    todoItem.createdAt = createdAt;
+    todoItem.isCompleted = isCompleted;
+    todoItem.focusCount = focusCount;
+    todoItem.focusDurationMinutes = focusDurationMinutes;
+    return todoItem;
+  }
 }

@@ -23,6 +23,8 @@ export struct ToDoListItem {
   toggleTodoStatus: (item: ToDo) => void = () => {};
   deliverTodo: (item: ToDo) => void = () => {};
   startFocus: (item: ToDo) => void = () => {};
+  showTodoDetail: (item: ToDo) => void = () => {};
+  updateTodoItem: (item: ToDo) => void = () => {};
   @State isEdited: boolean = false;
 
   /**
@@ -85,6 +87,9 @@ export struct ToDoListItem {
             .fontSize($r('sys.float.ohos_id_text_size_headline9'))
             .layoutWeight(1)
             .decoration({ type: this.toDoItem.isCompleted ? TextDecorationType.LineThrough : TextDecorationType.None })
+            .onClick(() => {
+              this.showTodoDetail(this.toDoItem);
+            })
           Text(this.getPriorityText())
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
             .fontColor(Color.White)
@@ -164,12 +169,27 @@ export struct ToDoListItem {
             .onClick(() => {
               this.deliverTodo(this.toDoItem);
             })
+          Text('\u8BE6\u60C5')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor('#182431')
+            .padding({
+              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+            })
+            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .backgroundColor('#F7F8FA')
+            .onClick(() => {
+              this.showTodoDetail(this.toDoItem);
+            })
         }
         if (this.isEdited) {
           Image($r('app.media.ic_public_ok_filled'))
             .width(STYLE_CONFIG.MENU_IMAGE_SIZE)
             .aspectRatio(1)
             .onClick(() => {
+              this.updateTodoItem(this.toDoItem);
               this.isEdited = false;
             })
         } else {
