@@ -582,6 +582,54 @@ struct ToDoList {
     return this.getAllTodos().filter((item: ToDo) => !item.isCompleted).length;
   }
 
+  getDailyGoalCompletionRate(): number {
+    let activeGoalIndexes = this.getActiveDailyGoalIndexes();
+    if (activeGoalIndexes.length === 0) {
+      return 0;
+    }
+    let achievedCount = activeGoalIndexes.filter((index: number) => this.isDailyGoalAchieved(index)).length;
+    return Math.round(achievedCount * 100 / activeGoalIndexes.length);
+  }
+
+  getAchievementCount(): number {
+    let achievementCount = 0;
+    if (this.getCompletedCount() >= 1) {
+      achievementCount += 1;
+    }
+    if (this.getCompletedCount() >= 10) {
+      achievementCount += 1;
+    }
+    if (this.getTotalFocusCount() >= 5) {
+      achievementCount += 1;
+    }
+    if (this.dailyGoalStreak >= 3) {
+      achievementCount += 1;
+    }
+    if (this.getOwnedOutfitCount() >= 3) {
+      achievementCount += 1;
+    }
+    if (this.lastRealSentTask !== '\u6682\u65E0' || this.lastRealReceivedTask !== '\u6682\u65E0') {
+      achievementCount += 1;
+    }
+    if (this.getAllTodos().some((item: ToDo) => item.deadline > 0)) {
+      achievementCount += 1;
+    }
+    return achievementCount;
+  }
+
+  getTodayAdvice(): string {
+    if (this.getUncompletedCount() >= 5) {
+      return '\u5148\u6311\u4E00\u4EF6\u6700\u5C0F\u7684\u4EFB\u52A1\u5F00\u59CB\uFF0C\u628A\u538B\u529B\u62C6\u5C0F\u3002';
+    }
+    if (this.todayPomodoroCount === 0 && this.getUncompletedCount() > 0) {
+      return '\u9009\u4E00\u4E2A\u4EFB\u52A1\u5F00\u542F\u4E00\u4E2A\u756A\u8304\uFF0C\u5148\u8FDB\u5165\u72B6\u6001\u3002';
+    }
+    if (this.getDailyGoalCompletionRate() < 50) {
+      return '\u4ECA\u65E5\u76EE\u6807\u8FD8\u6709\u7A7A\u95F4\uFF0C\u5B8C\u6210\u4E00\u9879\u5C31\u80FD\u63A8\u52A8\u5BA0\u7269\u6210\u957F\u3002';
+    }
+    return '\u8282\u594F\u4E0D\u9519\uFF0C\u4FDD\u6301\u8FD9\u4E2A\u5B66\u4E60\u624B\u611F\u3002';
+  }
+
   getThemeColor(): string {
     return this.themeColors[this.themeIndex];
   }
@@ -1462,6 +1510,57 @@ struct ToDoList {
     this.saveAppState();
   }
 
+  confirmClearCompletedTodos() {
+    if (this.getCompletedCount() === 0) {
+      this.showToastMessage('\u6682\u65E0\u5DF2\u5B8C\u6210\u4EFB\u52A1');
+      return;
+    }
+    AlertDialog.show({
+      title: '\u6E05\u7406\u5DF2\u5B8C\u6210',
+      message: '\u786E\u5B9A\u6E05\u7406\u6240\u6709\u5DF2\u5B8C\u6210\u4EFB\u52A1\u5417\uFF1F',
+      primaryButton: {
+        value: '\u53D6\u6D88',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '\u6E05\u7406',
+        fontColor: '#D94838',
+        action: () => {
+          this.toDoData = this.toDoData.filter((todoItem: ToDo) => !todoItem.isCompleted);
+          this.showToastMessage('\u5DF2\u6E05\u7406\u5DF2\u5B8C\u6210\u4EFB\u52A1');
+          this.saveAppState();
+        }
+      }
+    });
+  }
+
+  confirmResetTodayGoals() {
+    AlertDialog.show({
+      title: '\u91CD\u7F6E\u4ECA\u65E5\u76EE\u6807',
+      message: '\u5C06\u91CD\u7F6E\u4ECA\u65E5\u76EE\u6807\u9886\u53D6\u72B6\u6001\u3001\u4ECA\u65E5\u5B8C\u6210\u6570\u548C\u4ECA\u65E5\u4E13\u6CE8\u6570\u636E\u3002',
+      primaryButton: {
+        value: '\u53D6\u6D88',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '\u91CD\u7F6E',
+        fontColor: '#D94838',
+        action: () => {
+          this.dailyGoalRewardClaimed = this.dailyGoalRewardClaimed.map(() => false);
+          this.todayCompletedCount = 0;
+          this.todayPomodoroCount = 0;
+          this.todayFocusMinutes = 0;
+          this.todayReadingMinutes = 0;
+          this.dailyGoalDate = this.getTodayString();
+          this.showToastMessage('\u4ECA\u65E5\u76EE\u6807\u5DF2\u91CD\u7F6E');
+          this.saveAppState();
+        }
+      }
+    });
+  }
+
   confirmDeleteItem(item: ToDo) {
     AlertDialog.show({
       title: '\u5220\u9664\u786E\u8BA4',
@@ -1595,6 +1694,10 @@ struct ToDoList {
             this.showAddGoalEditor();
           }
         })
+      Text('\u65B0\u589E\u76EE\u6807\u4F7F\u7528\u5361\u7247\u5F0F\u8F93\u5165\uFF1A\u586B\u540D\u79F0\u3001\u9009\u7C7B\u578B\u548C\u6570\u91CF\u540E\u786E\u8BA4\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .width(Constant.PERCENT_FULL)
       Text('\u6062\u590D\u9ED8\u8BA4\u76EE\u6807')
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(this.getThemeColor())
@@ -2023,6 +2126,7 @@ struct ToDoList {
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(this.getThemeColor())
         .width(Constant.PERCENT_FULL)
+      this.deliveryStatusRow('\u6743\u9650\u72B6\u6001', '\u771F\u5B9E\u6295\u9001\u524D\u4F1A\u81EA\u52A8\u68C0\u67E5/\u7533\u8BF7')
       this.deliveryStatusRow('\u6700\u8FD1\u53D1\u9001\u4EFB\u52A1', this.lastRealSentTask)
       this.deliveryStatusRow('\u6700\u8FD1\u63A5\u6536\u4EFB\u52A1', this.lastRealReceivedTask)
       this.deliveryStatusRow('\u6700\u8FD1\u8BB0\u5F55', this.lastDeliveryRecord)
@@ -2166,11 +2270,32 @@ struct ToDoList {
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(this.getThemeColor())
       }
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u4ECA\u5929\u8FD8\u6CA1\u6709\u4EFB\u52A1\uFF0C\u6DFB\u52A0\u4E00\u4E2A\u5C0F\u76EE\u6807\u5427')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .layoutWeight(1)
+        Text('\u6E05\u7406\u5DF2\u5B8C\u6210')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getCompletedCount() > 0 ? '#D94838' : $r('sys.color.ohos_id_color_text_secondary'))
+          .padding({
+            left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor('#FFF1F0')
+          .onClick(() => {
+            this.confirmClearCompletedTodos();
+          })
+      }
+      .width(Constant.PERCENT_FULL)
       this.searchSortPanel()
       List({ initialIndex: 0, space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         if (this.getVisibleTodos().length === 0) {
           ListItem() {
-            Text(this.getTotalCount() === 0 ? '\u70B9\u51FB\u65B0\u589E\u5F85\u529E\uFF0C\u65B0\u4EFB\u52A1\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC' :
+            Text(this.getTotalCount() === 0 ? '\u4ECA\u5929\u8FD8\u6CA1\u6709\u4EFB\u52A1\uFF0C\u6DFB\u52A0\u4E00\u4E2A\u5C0F\u76EE\u6807\u5427' :
               '\u6CA1\u6709\u5339\u914D\u7684\u5F85\u529E')
               .fontSize($r('sys.float.ohos_id_text_size_body1'))
               .fontColor($r('sys.color.ohos_id_color_text_secondary'))
@@ -2264,6 +2389,7 @@ struct ToDoList {
   homePage() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.pageTitle('\u4ECA\u65E5\u6982\u89C8')
+      this.welcomeCard()
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         this.overviewMetric('\u4ECA\u65E5\u4EFB\u52A1', `${this.getTotalCount()}`)
         this.overviewMetric('\u4ECA\u65E5\u5B8C\u6210\u7387', `${this.getCompletionRate()}%`)
@@ -2274,6 +2400,12 @@ struct ToDoList {
         this.overviewMetric('\u5F53\u524D\u79EF\u5206', `${this.score}`)
       }
       .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`)
+        this.overviewMetric('\u76EE\u6807\u8FBE\u6210\u7387', `${this.getDailyGoalCompletionRate()}%`)
+      }
+      .width(Constant.PERCENT_FULL)
+      this.todayAdviceCard()
       this.checkInCard()
       this.dailyGoalCard()
       this.petMiniCard()
@@ -2281,6 +2413,39 @@ struct ToDoList {
       this.countdownCard()
     }
     .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  welcomeCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text('\u4ECA\u5929\u4E5F\u8981\u9AD8\u6548\u5B8C\u6210\u4EFB\u52A1')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(this.getThemeColor())
+        .width(Constant.PERCENT_FULL)
+      Text(`\u5F85\u529E ${this.getUncompletedCount()} \u4EF6\uFF0C\u5BA0\u7269 Lv.${this.getPetLevel()} \u6B63\u5728\u966A\u4F60\u5B66\u4E60`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  todayAdviceCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.sectionTitle('\u4ECA\u65E5\u5B66\u4E60\u5EFA\u8BAE')
+      Text(this.getTodayAdvice())
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
   }
 
   @Builder
@@ -2368,7 +2533,14 @@ struct ToDoList {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.pageTitle('\u7EDF\u8BA1')
       this.statisticsPanel()
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u76EE\u6807\u8FBE\u6210\u7387', `${this.getDailyGoalCompletionRate()}%`)
+        this.overviewMetric('\u5F53\u524D\u79EF\u5206', `${this.score}`)
+      }
+      .width(Constant.PERCENT_FULL)
       this.progressCard('\u4EFB\u52A1\u5B8C\u6210\u7387', this.getCompletionRate(), `${this.getCompletedCount()} / ${this.getTotalCount()}`)
+      this.progressCard('\u81EA\u5F8B\u76EE\u6807\u8FBE\u6210\u7387', this.getDailyGoalCompletionRate(), `${this.getActiveDailyGoalIndexes().length}\u9879\u76EE\u6807`)
+      this.progressCard('\u5BA0\u7269\u6210\u957F\u8FDB\u5EA6', this.getPetProgress(), `Lv.${this.getPetLevel()} ${this.getPetName()}`)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         this.overviewMetric('\u4ECA\u65E5\u5B8C\u6210', `${this.todayCompletedCount}`)
         this.overviewMetric('\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`)
@@ -2382,6 +2554,7 @@ struct ToDoList {
       this.dailyGoalCard()
       this.progressCard('\u7D2F\u8BA1\u4E13\u6CE8\u65F6\u957F', Math.min(100, Math.round(this.getTotalFocusMinutes() * 100 / 300)),
         `${this.getTotalFocusMinutes()}\u5206\u949F`)
+      this.achievementBadgeCard()
     }
     .width(Constant.PERCENT_FULL)
   }
@@ -2414,6 +2587,8 @@ struct ToDoList {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.pageTitle('\u6211\u7684')
       this.profileInfoCard()
+      this.dataManagementCard()
+      this.featureHighlightsCard()
       this.themeStore()
     }
     .width(Constant.PERCENT_FULL)
@@ -2610,10 +2785,13 @@ struct ToDoList {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.sectionTitle('\u6210\u5C31\u5FBD\u7AE0')
       Flex({ wrap: FlexWrap.Wrap }) {
-        this.badgeItem('\u521D\u5B66\u8005', this.getTotalCount() > 0)
-        this.badgeItem('\u884C\u52A8\u6D3E', this.getCompletedCount() >= 3)
-        this.badgeItem('\u4E13\u6CE8\u8005', this.getTotalFocusCount() >= 3)
-        this.badgeItem('\u575A\u6301\u6253\u5361', this.hasCheckedToday)
+        this.badgeItem('\u9996\u6B21\u5B8C\u6210', this.getCompletedCount() >= 1)
+        this.badgeItem('\u5341\u9879\u8FBE\u6210', this.getCompletedCount() >= 10)
+        this.badgeItem('\u756A\u8304\u65B0\u661F', this.getTotalFocusCount() >= 5)
+        this.badgeItem('\u8FDE\u7EED\u81EA\u5F8B', this.dailyGoalStreak >= 3)
+        this.badgeItem('\u88C5\u626E\u6536\u85CF', this.getOwnedOutfitCount() >= 3)
+        this.badgeItem('\u8DE8\u8BBE\u5907\u5C1D\u8BD5', this.lastRealSentTask !== '\u6682\u65E0' || this.lastRealReceivedTask !== '\u6682\u65E0')
+        this.badgeItem('\u622A\u6B62\u65E5\u89C4\u5212', this.getAllTodos().some((item: ToDo) => item.deadline > 0))
       }
     }
     .width(Constant.PERCENT_FULL)
@@ -2661,6 +2839,58 @@ struct ToDoList {
       this.deliveryStatusRow('\u5F53\u524D\u79EF\u5206', `${this.score}`)
       this.deliveryStatusRow('\u6570\u636E\u4FDD\u5B58', '\u672C\u5730Preferences\u81EA\u52A8\u4FDD\u5B58')
       this.deliveryStatusRow('App', '\u5F85\u529E\u3001\u756A\u8304\u3001\u5BA0\u7269\u6210\u957F\u4E0E\u8DE8\u8BBE\u5907\u6295\u9001')
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  dataManagementCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.sectionTitle('\u6570\u636E\u7BA1\u7406')
+      this.deliveryStatusRow('\u672C\u5730\u4FDD\u5B58', '\u6570\u636E\u5DF2\u672C\u5730\u4FDD\u5B58')
+      this.deliveryStatusRow('\u4ECA\u65E5\u76EE\u6807\u65E5\u671F', this.dailyGoalDate.length > 0 ? this.dailyGoalDate : this.getTodayString())
+      this.deliveryStatusRow('\u5DF2\u62E5\u6709\u88C5\u626E', `${this.getOwnedOutfitCount()} / ${this.outfitNames.length}`)
+      this.deliveryStatusRow('\u6295\u9001\u53BB\u91CD\u8BB0\u5F55', `${this.receivedTransferIds.length}`)
+      Text('\u91CD\u7F6E\u4ECA\u65E5\u76EE\u6807')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#D94838')
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .padding({
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+        .backgroundColor('#FFF1F0')
+        .onClick(() => {
+          this.confirmResetTodayGoals();
+        })
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  featureHighlightsCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.sectionTitle('\u4F5C\u4E1A\u4EAE\u70B9')
+      Text('List\u5F85\u529E\u7F16\u8F91 / \u672C\u5730\u6301\u4E45\u5316 / \u756A\u8304\u4E13\u6CE8 / \u5BA0\u7269\u6210\u957F')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text('\u81EA\u5F8B\u76EE\u6807 / \u65E5\u5386\u5012\u8BA1\u65F6 / \u88C5\u626E\u5546\u5E97 / \u771F\u5B9E\u8DE8\u8BBE\u5907\u6295\u9001')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text(`\u5DF2\u89E3\u9501\u6210\u5C31 ${this.getAchievementCount()} / 7`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.getThemeColor())
+        .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
