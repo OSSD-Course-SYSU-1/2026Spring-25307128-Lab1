@@ -48,6 +48,20 @@ interface StoredAppState {
   lastCheckInDate?: string;
   todayPomodoroCount?: number;
   todayPomodoroDate?: string;
+  todayCompletedCount?: number;
+  todayFocusMinutes?: number;
+  todayReadingMinutes?: number;
+  dailyGoalDate?: string;
+  dailyGoalNames?: string[];
+  dailyGoalTargets?: number[];
+  dailyGoalRewards?: number[];
+  dailyGoalTypes?: number[];
+  dailyGoalRewardClaimed?: boolean[];
+  dailyGoalEnabled?: boolean[];
+  dailyGoalStreak?: number;
+  dailyGoalStreakDate?: string;
+  ownedOutfits?: boolean[];
+  equippedOutfitIndex?: number;
   lastDeliveryRecord?: string;
   realDeliveryStatus?: string;
   lastRealSentTask?: string;
@@ -78,6 +92,23 @@ struct ToDoList {
   @State hasCheckedToday: boolean = false;
   @State lastCheckInDate: string = '';
   @State todayPomodoroCount: number = 0;
+  @State todayCompletedCount: number = 0;
+  @State todayFocusMinutes: number = 0;
+  @State todayReadingMinutes: number = 0;
+  @State dailyGoalNames: string[] = ['\u5B8C\u62103\u4E2A\u4EFB\u52A1', '\u5B8C\u62102\u4E2A\u756A\u8304',
+    '\u4E13\u6CE830\u5206\u949F', '\u9605\u8BFB30\u5206\u949F'];
+  @State dailyGoalTargets: number[] = [3, 2, 30, 30];
+  @State dailyGoalRewards: number[] = [15, 15, 20, 20];
+  @State dailyGoalTypes: number[] = [0, 1, 2, 3];
+  @State dailyGoalRewardClaimed: boolean[] = [false, false, false, false];
+  @State dailyGoalEnabled: boolean[] = [true, true, true, true];
+  @State dailyGoalStreak: number = 0;
+  @State isAddingGoal: boolean = false;
+  @State newGoalName: string = '';
+  @State newGoalTargetIndex: number = 0;
+  @State newGoalTypeIndex: number = 0;
+  @State ownedOutfits: boolean[] = [false, false, false, false, false, false];
+  @State equippedOutfitIndex: number = -1;
   @State unlockedThemes: boolean[] = [true, true, false, false, false, false];
   @State lastDeliveryRecord: string = '\u6682\u65E0\u6295\u9001\u8BB0\u5F55';
   @State realDeliveryStatus: string = '\u771F\u5B9E\u6295\u9001\u672A\u5F00\u59CB';
@@ -101,6 +132,8 @@ struct ToDoList {
   private realDeliveryDevices: TransferDevice[] = [];
   private hasInitializedTransfer: boolean = false;
   private todayPomodoroDate: string = '';
+  private dailyGoalDate: string = '';
+  private dailyGoalStreakDate: string = '';
   private themeNames: string[] = ['\u84DD\u8272', '\u7EFF\u8272', '\u7D2B\u8272', '\u6A59\u8272',
     '\u6A31\u82B1\u7C89', '\u661F\u7A7A\u9ED1'];
   private themeColors: string[] = ['#0A59F7', '#1E8E3E', '#7E3FF2', '#F57C00', '#E85D9E', '#222831'];
@@ -114,6 +147,14 @@ struct ToDoList {
   private deadlineOffsets: number[] = [-1, 0, 1, 3, 7];
   private focusMinuteNames: string[] = ['5\u5206\u949F', '15\u5206\u949F', '25\u5206\u949F'];
   private focusMinuteValues: number[] = [5, 15, 25];
+  private dailyGoalTypeNames: string[] = ['\u4EFB\u52A1\u5B8C\u6210', '\u756A\u8304\u5B8C\u6210',
+    '\u4E13\u6CE8\u5206\u949F', '\u9605\u8BFB\u5206\u949F'];
+  private dailyGoalTargetOptions: number[] = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+  private dailyGoalTargetNames: string[] = ['1', '2', '3', '5', '10', '15', '20', '30', '45', '60'];
+  private outfitNames: string[] = ['\uD83C\uDF92 \u5B66\u4E60\u80CC\u5305', '\uD83D\uDC51 \u81EA\u5F8B\u738B\u51A0',
+    '\uD83E\uDDE3 \u4E13\u6CE8\u56F4\u5DFE', '\uD83C\uDF1F \u661F\u5149\u80CC\u666F',
+    '\uD83D\uDCDA \u4E66\u672C\u4F19\u4F34', '\uD83C\uDFC5 \u4E13\u6CE8\u5956\u7AE0'];
+  private outfitPrices: number[] = [30, 80, 60, 100, 50, 120];
 
   aboutToAppear() {
     this.startApp();
@@ -192,6 +233,55 @@ struct ToDoList {
     this.lastCheckInDate = this.getStoredString(storedState.lastCheckInDate, this.lastCheckInDate);
     this.todayPomodoroCount = this.getStoredNumber(storedState.todayPomodoroCount, this.todayPomodoroCount);
     this.todayPomodoroDate = this.getStoredString(storedState.todayPomodoroDate, this.lastCheckInDate);
+    this.todayCompletedCount = Math.max(0, this.getStoredNumber(storedState.todayCompletedCount,
+      this.todayCompletedCount));
+    this.todayFocusMinutes = Math.max(0, this.getStoredNumber(storedState.todayFocusMinutes, this.todayFocusMinutes));
+    this.todayReadingMinutes = Math.max(0, this.getStoredNumber(storedState.todayReadingMinutes,
+      this.todayReadingMinutes));
+    this.dailyGoalDate = this.getStoredString(storedState.dailyGoalDate, this.getTodayString());
+    this.restoreDailyGoalConfig(storedState);
+    let storedGoalClaims = storedState.dailyGoalRewardClaimed;
+    if (Array.isArray(storedGoalClaims)) {
+      let updatedClaims: boolean[] = [];
+      this.dailyGoalNames.forEach(() => {
+        updatedClaims.push(false);
+      });
+      storedGoalClaims.forEach((isClaimed: boolean, index: number) => {
+        if (index < updatedClaims.length && typeof isClaimed === 'boolean') {
+          updatedClaims[index] = isClaimed;
+        }
+      });
+      this.dailyGoalRewardClaimed = updatedClaims;
+    }
+    let storedGoalEnabled = storedState.dailyGoalEnabled;
+    if (Array.isArray(storedGoalEnabled)) {
+      let updatedEnabled: boolean[] = [];
+      this.dailyGoalNames.forEach(() => {
+        updatedEnabled.push(true);
+      });
+      storedGoalEnabled.forEach((isEnabled: boolean, index: number) => {
+        if (index < updatedEnabled.length && typeof isEnabled === 'boolean') {
+          updatedEnabled[index] = isEnabled;
+        }
+      });
+      this.dailyGoalEnabled = updatedEnabled;
+    }
+    this.dailyGoalStreak = Math.max(0, this.getStoredNumber(storedState.dailyGoalStreak, this.dailyGoalStreak));
+    this.dailyGoalStreakDate = this.getStoredString(storedState.dailyGoalStreakDate, this.dailyGoalStreakDate);
+    let storedOutfits = storedState.ownedOutfits;
+    if (Array.isArray(storedOutfits)) {
+      let updatedOutfits = [false, false, false, false, false, false];
+      storedOutfits.forEach((isOwned: boolean, index: number) => {
+        if (index < updatedOutfits.length && typeof isOwned === 'boolean') {
+          updatedOutfits[index] = isOwned;
+        }
+      });
+      this.ownedOutfits = updatedOutfits;
+    }
+    let storedOutfitIndex = this.getStoredNumber(storedState.equippedOutfitIndex, this.equippedOutfitIndex);
+    if (storedOutfitIndex >= -1 && storedOutfitIndex < this.outfitNames.length) {
+      this.equippedOutfitIndex = storedOutfitIndex;
+    }
     this.lastDeliveryRecord = this.getStoredString(storedState.lastDeliveryRecord, this.lastDeliveryRecord);
     this.realDeliveryStatus = this.getStoredString(storedState.realDeliveryStatus, this.realDeliveryStatus);
     this.lastRealSentTask = this.getStoredString(storedState.lastRealSentTask, this.lastRealSentTask);
@@ -204,6 +294,40 @@ struct ToDoList {
       this.receivedTransferIds = storedTransferIds.filter((transferId: string) => transferId.length > 0);
     }
     this.petExp = this.getInitialPetExp(storedState.petExp);
+  }
+
+  restoreDailyGoalConfig(storedState: StoredAppState) {
+    let storedNames = storedState.dailyGoalNames;
+    let storedTargets = storedState.dailyGoalTargets;
+    let storedRewards = storedState.dailyGoalRewards;
+    let storedTypes = storedState.dailyGoalTypes;
+    if (!Array.isArray(storedNames) || !Array.isArray(storedTargets) || !Array.isArray(storedTypes)) {
+      return;
+    }
+    let goalNames: string[] = storedNames;
+    let goalTargets: number[] = storedTargets;
+    let goalRewards: number[] = Array.isArray(storedRewards) ? storedRewards : [];
+    let goalTypes: number[] = storedTypes;
+    let restoredNames: string[] = [];
+    let restoredTargets: number[] = [];
+    let restoredRewards: number[] = [];
+    let restoredTypes: number[] = [];
+    goalNames.forEach((goalName: string, index: number) => {
+      if (typeof goalName === 'string' && goalName.length > 0 &&
+        typeof goalTargets[index] === 'number' && typeof goalTypes[index] === 'number') {
+        restoredNames.push(goalName);
+        restoredTargets.push(Math.max(1, Math.round(goalTargets[index])));
+        restoredTypes.push(this.normalizeGoalType(goalTypes[index]));
+        restoredRewards.push(typeof goalRewards[index] === 'number' ?
+          Math.max(1, Math.round(goalRewards[index])) : 10);
+      }
+    });
+    if (restoredNames.length > 0) {
+      this.dailyGoalNames = restoredNames;
+      this.dailyGoalTargets = restoredTargets;
+      this.dailyGoalRewards = restoredRewards;
+      this.dailyGoalTypes = restoredTypes;
+    }
   }
 
   restoreTodo(item: StoredToDo): ToDo {
@@ -275,6 +399,21 @@ struct ToDoList {
       this.todayPomodoroDate = today;
       hasChanged = true;
     }
+    if (this.dailyGoalDate !== today) {
+      this.dailyGoalRewardClaimed = [false, false, false, false];
+      this.dailyGoalDate = today;
+      if (this.todayFocusMinutes !== 0) {
+        this.todayFocusMinutes = 0;
+      }
+      if (this.todayReadingMinutes !== 0) {
+        this.todayReadingMinutes = 0;
+      }
+      if (this.todayCompletedCount !== 0) {
+        this.todayCompletedCount = 0;
+      }
+      this.dailyGoalRewardClaimed = this.dailyGoalRewardClaimed.map(() => false);
+      hasChanged = true;
+    }
     return hasChanged;
   }
 
@@ -303,6 +442,20 @@ struct ToDoList {
       lastCheckInDate: this.lastCheckInDate,
       todayPomodoroCount: this.todayPomodoroCount,
       todayPomodoroDate: this.todayPomodoroDate,
+      todayCompletedCount: this.todayCompletedCount,
+      todayFocusMinutes: this.todayFocusMinutes,
+      todayReadingMinutes: this.todayReadingMinutes,
+      dailyGoalDate: this.dailyGoalDate,
+      dailyGoalNames: [...this.dailyGoalNames],
+      dailyGoalTargets: [...this.dailyGoalTargets],
+      dailyGoalRewards: [...this.dailyGoalRewards],
+      dailyGoalTypes: [...this.dailyGoalTypes],
+      dailyGoalRewardClaimed: [...this.dailyGoalRewardClaimed],
+      dailyGoalEnabled: [...this.dailyGoalEnabled],
+      dailyGoalStreak: this.dailyGoalStreak,
+      dailyGoalStreakDate: this.dailyGoalStreakDate,
+      ownedOutfits: [...this.ownedOutfits],
+      equippedOutfitIndex: this.equippedOutfitIndex,
       lastDeliveryRecord: this.lastDeliveryRecord,
       realDeliveryStatus: this.realDeliveryStatus,
       lastRealSentTask: this.lastRealSentTask,
@@ -328,6 +481,16 @@ struct ToDoList {
 
   getTodayString(): string {
     let currentDate = new Date();
+    let month = currentDate.getMonth() + 1;
+    let date = currentDate.getDate();
+    let monthText = month < 10 ? `0${month}` : `${month}`;
+    let dateText = date < 10 ? `0${date}` : `${date}`;
+    return `${currentDate.getFullYear()}-${monthText}-${dateText}`;
+  }
+
+  getYesterdayString(): string {
+    let currentDate = new Date();
+    currentDate.setDate(currentDate.getDate() - 1);
     let month = currentDate.getMonth() + 1;
     let date = currentDate.getDate();
     let monthText = month < 10 ? `0${month}` : `${month}`;
@@ -573,6 +736,110 @@ struct ToDoList {
     return totalCount;
   }
 
+  normalizeGoalType(goalType: number): number {
+    let normalizedType = Math.round(goalType);
+    if (normalizedType < 0) {
+      return 0;
+    }
+    if (normalizedType > 3) {
+      return 3;
+    }
+    return normalizedType;
+  }
+
+  isReadingTask(item: ToDo): boolean {
+    return item.name.includes('\u9605\u8BFB') || item.name.includes('\u8BFB\u4E66');
+  }
+
+  getOwnedOutfitCount(): number {
+    return this.ownedOutfits.filter((isOwned: boolean) => isOwned).length;
+  }
+
+  getEquippedOutfitName(): string {
+    if (this.equippedOutfitIndex >= 0 && this.equippedOutfitIndex < this.outfitNames.length &&
+      this.ownedOutfits[this.equippedOutfitIndex]) {
+      return this.outfitNames[this.equippedOutfitIndex];
+    }
+    return '\u6682\u672A\u88C5\u5907';
+  }
+
+  getDailyGoalProgress(index: number): number {
+    let goalType = this.normalizeGoalType(this.dailyGoalTypes[index]);
+    if (goalType === 0) {
+      return this.todayCompletedCount;
+    }
+    if (goalType === 1) {
+      return this.todayPomodoroCount;
+    }
+    if (goalType === 2) {
+      return this.todayFocusMinutes;
+    }
+    if (goalType === 3) {
+      return this.todayReadingMinutes;
+    }
+    return 0;
+  }
+
+  getDailyGoalPercent(index: number): number {
+    let target = this.dailyGoalTargets[index];
+    if (target <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.round(this.getDailyGoalProgress(index) * 100 / target));
+  }
+
+  isDailyGoalAchieved(index: number): boolean {
+    return this.getDailyGoalProgress(index) >= this.dailyGoalTargets[index];
+  }
+
+  hasVisibleDailyGoals(): boolean {
+    return this.dailyGoalEnabled.some((isEnabled: boolean) => isEnabled);
+  }
+
+  getActiveDailyGoalIndexes(): number[] {
+    let indexes: number[] = [];
+    this.dailyGoalNames.forEach((goalName: string, index: number) => {
+      if (this.dailyGoalEnabled[index]) {
+        indexes.push(index);
+      }
+    });
+    return indexes;
+  }
+
+  updateDailyGoalStreak() {
+    if (this.dailyGoalStreakDate === this.getTodayString()) {
+      return;
+    }
+    if (this.dailyGoalStreakDate === this.getYesterdayString()) {
+      this.dailyGoalStreak += 1;
+    } else {
+      this.dailyGoalStreak = 1;
+    }
+    this.dailyGoalStreakDate = this.getTodayString();
+  }
+
+  grantAchievedDailyGoals() {
+    this.resetDailyStateIfNeeded();
+    let gainedScore = 0;
+    let updatedClaims = [...this.dailyGoalRewardClaimed];
+    this.dailyGoalNames.forEach((goalName: string, index: number) => {
+      if (this.dailyGoalEnabled[index] && this.isDailyGoalAchieved(index) && !updatedClaims[index]) {
+        updatedClaims[index] = true;
+        gainedScore += this.dailyGoalRewards[index];
+      }
+    });
+    if (gainedScore > 0) {
+      this.dailyGoalRewardClaimed = updatedClaims;
+      this.addGrowthReward(gainedScore);
+      let activeGoalIndexes = this.getActiveDailyGoalIndexes();
+      if (activeGoalIndexes.length > 0 &&
+        activeGoalIndexes.every((index: number) => this.dailyGoalRewardClaimed[index])) {
+        this.updateDailyGoalStreak();
+      }
+      this.showToastMessage(`\u76EE\u6807\u8FBE\u6210\u5956\u52B1 +${gainedScore}`);
+    }
+  }
+
   getPriorityName(priority: number): string {
     if (priority >= 2) {
       return '\u9AD8\u4F18\u5148\u7EA7';
@@ -712,12 +979,14 @@ struct ToDoList {
   completeFocus() {
     let focusMinutes = Math.round(this.focusTotalSeconds / 60);
     let hasFocusTask = false;
+    let isReadingFocus = false;
     this.clearFocusTimer();
     this.toDoData = this.toDoData.map((todoItem: ToDo) => {
       if (todoItem.key === this.focusTaskKey) {
         todoItem.focusCount += 1;
         todoItem.focusDurationMinutes += focusMinutes;
         hasFocusTask = true;
+        isReadingFocus = this.isReadingTask(todoItem);
       }
       return todoItem;
     });
@@ -728,6 +997,10 @@ struct ToDoList {
         this.todayPomodoroCount = 0;
       }
       this.todayPomodoroCount += 1;
+      this.todayFocusMinutes += focusMinutes;
+      if (isReadingFocus) {
+        this.todayReadingMinutes += focusMinutes;
+      }
     }
     this.focusTaskKey = '';
     this.focusRemainingSeconds = 0;
@@ -735,6 +1008,7 @@ struct ToDoList {
     this.isFocusRunning = false;
     this.showToastMessage(hasFocusTask ? '\u4E13\u6CE8\u5B8C\u6210\uFF0C\u79EF\u5206 +15' : '\u4E13\u6CE8\u5DF2\u7ED3\u675F');
     if (hasFocusTask) {
+      this.grantAchievedDailyGoals();
       this.saveAppState();
     }
   }
@@ -762,17 +1036,42 @@ struct ToDoList {
     return Math.round((this.focusTotalSeconds - this.focusRemainingSeconds) * 100 / this.focusTotalSeconds);
   }
 
-  toggleTodoStatus(item: ToDo) {
-    this.toDoData = this.toDoData.map((todoItem: ToDo) => {
-      if (todoItem.key === item.key) {
-        todoItem.isCompleted = !todoItem.isCompleted;
-      }
-      return todoItem;
-    });
-    if (item.isCompleted) {
+  toggleTaskCompleteByKey(itemKey: string) {
+    let normalizedKey = String(itemKey);
+    let targetIndex = this.toDoData.findIndex((todoItem: ToDo) => String(todoItem.key) === normalizedKey);
+    if (targetIndex < 0) {
+      hilog.info(0x0000, 'Index', `toggle key=${normalizedKey}, targetIndex=-1, before=not_found, after=not_found`);
+      return;
+    }
+    let wasCompleted = this.toDoData[targetIndex].isCompleted;
+    let sourceItem = this.toDoData[targetIndex];
+    let updatedItem = ToDo.fromStorage(
+      sourceItem.key,
+      sourceItem.name,
+      sourceItem.createdAt,
+      sourceItem.priority,
+      !wasCompleted,
+      sourceItem.focusCount,
+      sourceItem.focusDurationMinutes,
+      sourceItem.deadline
+    );
+    let completedNow = updatedItem.isCompleted;
+    this.toDoData[targetIndex] = updatedItem;
+    hilog.info(0x0000, 'Index',
+      `toggle key=${normalizedKey}, targetIndex=${targetIndex}, before=${wasCompleted}, after=${completedNow}`);
+    this.toDoData = [...this.toDoData];
+    if (completedNow) {
       this.addGrowthReward(10);
+      this.todayCompletedCount += 1;
+      try {
+        this.grantAchievedDailyGoals();
+      } catch (error) {
+        let err = error as BusinessError;
+        hilog.error(0x0000, 'Index', `grant daily goal failed. error code=${err.code}, message=${err.message}`);
+      }
     } else {
       this.score = Math.max(0, this.score - 10);
+      this.todayCompletedCount = Math.max(0, this.todayCompletedCount - 1);
     }
     this.saveAppState();
   }
@@ -828,6 +1127,103 @@ struct ToDoList {
     this.score -= price;
     this.themeIndex = index;
     this.showToastMessage('\u4E3B\u9898\u5DF2\u89E3\u9501');
+    this.saveAppState();
+  }
+
+  handleOutfitTap(index: number) {
+    if (index < 0 || index >= this.outfitNames.length) {
+      return;
+    }
+    if (this.ownedOutfits[index]) {
+      this.equippedOutfitIndex = index;
+      this.showToastMessage('\u88C5\u626E\u5DF2\u88C5\u5907');
+      this.saveAppState();
+      return;
+    }
+    let price = this.outfitPrices[index];
+    if (this.score < price) {
+      this.showToastMessage('\u79EF\u5206\u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u5151\u6362\u88C5\u626E');
+      return;
+    }
+    let updatedOutfits = [...this.ownedOutfits];
+    updatedOutfits[index] = true;
+    this.ownedOutfits = updatedOutfits;
+    this.equippedOutfitIndex = index;
+    this.score -= price;
+    this.showToastMessage('\u88C5\u626E\u5DF2\u5151\u6362\u5E76\u88C5\u5907');
+    this.saveAppState();
+  }
+
+  confirmDeleteDailyGoal(index: number) {
+    AlertDialog.show({
+      title: '\u5220\u9664\u76EE\u6807',
+      message: `\u786E\u5B9A\u5220\u9664\u201C${this.dailyGoalNames[index]}\u201D\u5417\uFF1F\u5220\u9664\u540E\u91CD\u542FApp\u4E5F\u4E0D\u4F1A\u81EA\u52A8\u6062\u590D\u3002`,
+      primaryButton: {
+        value: '\u53D6\u6D88',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '\u5220\u9664',
+        fontColor: '#D94838',
+        action: () => {
+          this.deleteDailyGoal(index);
+        }
+      }
+    });
+  }
+
+  deleteDailyGoal(index: number) {
+    if (index < 0 || index >= this.dailyGoalEnabled.length) {
+      return;
+    }
+    let updatedEnabled = [...this.dailyGoalEnabled];
+    updatedEnabled[index] = false;
+    this.dailyGoalEnabled = updatedEnabled;
+    this.showToastMessage('\u76EE\u6807\u5DF2\u5220\u9664');
+    this.saveAppState();
+  }
+
+  restoreDefaultDailyGoals() {
+    this.dailyGoalNames = ['\u5B8C\u62103\u4E2A\u4EFB\u52A1', '\u5B8C\u62102\u4E2A\u756A\u8304',
+      '\u4E13\u6CE830\u5206\u949F', '\u9605\u8BFB30\u5206\u949F'];
+    this.dailyGoalTargets = [3, 2, 30, 30];
+    this.dailyGoalRewards = [15, 15, 20, 20];
+    this.dailyGoalTypes = [0, 1, 2, 3];
+    this.dailyGoalEnabled = [true, true, true, true];
+    this.dailyGoalRewardClaimed = [false, false, false, false];
+    this.dailyGoalDate = this.getTodayString();
+    this.isAddingGoal = false;
+    this.showToastMessage('\u5DF2\u6062\u590D\u9ED8\u8BA4\u76EE\u6807');
+    this.saveAppState();
+  }
+
+  showAddGoalEditor() {
+    this.newGoalName = '';
+    this.newGoalTargetIndex = 0;
+    this.newGoalTypeIndex = 0;
+    this.isAddingGoal = true;
+  }
+
+  confirmAddDailyGoal() {
+    let goalName = this.newGoalName.trim();
+    if (goalName.length === 0) {
+      this.showToastMessage('\u8BF7\u5148\u8F93\u5165\u76EE\u6807\u540D\u79F0');
+      return;
+    }
+    let targetValue = this.dailyGoalTargetOptions[this.newGoalTargetIndex];
+    if (targetValue === undefined) {
+      targetValue = 1;
+    }
+    this.dailyGoalNames = [...this.dailyGoalNames, goalName];
+    this.dailyGoalTargets = [...this.dailyGoalTargets, targetValue];
+    this.dailyGoalRewards = [...this.dailyGoalRewards, 10];
+    this.dailyGoalTypes = [...this.dailyGoalTypes, this.normalizeGoalType(this.newGoalTypeIndex)];
+    this.dailyGoalEnabled = [...this.dailyGoalEnabled, true];
+    this.dailyGoalRewardClaimed = [...this.dailyGoalRewardClaimed, false];
+    this.isAddingGoal = false;
+    this.showToastMessage('\u76EE\u6807\u5DF2\u65B0\u589E');
+    this.grantAchievedDailyGoals();
     this.saveAppState();
   }
 
@@ -1160,6 +1556,232 @@ struct ToDoList {
   }
 
   @Builder
+  dailyGoalCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        this.sectionTitle('\u81EA\u5F8B\u76EE\u6807')
+        Text(`\u8FDE\u7EED ${this.dailyGoalStreak} \u5929`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+      }
+      .width(Constant.PERCENT_FULL)
+      if (!this.hasVisibleDailyGoals()) {
+        Text('\u76EE\u6807\u5DF2\u5168\u90E8\u5220\u9664\uFF0C\u53EF\u968F\u65F6\u6062\u590D\u9ED8\u8BA4\u76EE\u6807')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .width(Constant.PERCENT_FULL)
+      }
+      ForEach(this.getActiveDailyGoalIndexes(), (goalIndex: number) => {
+        this.dailyGoalItem(this.dailyGoalNames[goalIndex], goalIndex)
+      }, (goalIndex: number) => `${goalIndex}`)
+      if (this.isAddingGoal) {
+        this.addGoalEditor()
+      }
+      Text(this.isAddingGoal ? '\u6536\u8D77\u65B0\u589E\u76EE\u6807' : '+ \u6DFB\u52A0\u76EE\u6807')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(Color.White)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .padding({
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+        .backgroundColor(this.getThemeColor())
+        .onClick(() => {
+          if (this.isAddingGoal) {
+            this.isAddingGoal = false;
+          } else {
+            this.showAddGoalEditor();
+          }
+        })
+      Text('\u6062\u590D\u9ED8\u8BA4\u76EE\u6807')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.getThemeColor())
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .padding({
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+        .backgroundColor(this.getThemeLightColor())
+        .onClick(() => {
+          this.restoreDefaultDailyGoals();
+        })
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  dailyGoalItem(goalName: string, index: number) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Row() {
+        Text(goalName)
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor('#182431')
+          .layoutWeight(1)
+          .maxLines(1)
+        Text(this.dailyGoalRewardClaimed[index] ? '\u5DF2\u9886\u53D6' :
+          (this.isDailyGoalAchieved(index) ? `+${this.dailyGoalRewards[index]}` : '\u8FDB\u884C\u4E2D'))
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.dailyGoalRewardClaimed[index] ? '#8A8A8A' :
+            (this.isDailyGoalAchieved(index) ? this.getThemeColor() : $r('sys.color.ohos_id_color_text_secondary')))
+        Text('\u5220\u9664')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor('#D94838')
+          .padding({
+            left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor('#FFF1F0')
+          .onClick(() => {
+            this.confirmDeleteDailyGoal(index);
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      this.progressCard(`${this.getDailyGoalProgress(index)} / ${this.dailyGoalTargets[index]}`,
+        this.getDailyGoalPercent(index), `${this.dailyGoalTypeNames[this.normalizeGoalType(this.dailyGoalTypes[index])]} · ${this.isDailyGoalAchieved(index) ? '\u5DF2\u8FBE\u6210' : '\u672A\u8FBE\u6210'}`)
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  addGoalEditor() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      TextInput({ placeholder: '\u76EE\u6807\u540D\u79F0', text: this.newGoalName })
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .backgroundColor(Color.White)
+        .onChange((value: string) => {
+          this.newGoalName = value;
+        })
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u7C7B\u578B')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        Text(this.dailyGoalTypeNames[this.newGoalTypeIndex])
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+          .layoutWeight(1)
+        Text('\u9009\u62E9')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .padding({
+            left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor(this.getThemeColor())
+          .onClick(() => {
+            this.getUIContext().showTextPickerDialog({
+              range: this.dailyGoalTypeNames,
+              selected: this.newGoalTypeIndex,
+              onAccept: (value: TextPickerResult) => {
+                this.newGoalTypeIndex = Number(value.index);
+              }
+            });
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u76EE\u6807\u6570\u503C')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        Text(this.dailyGoalTargetNames[this.newGoalTargetIndex])
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+          .layoutWeight(1)
+        Text('\u9009\u62E9')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .padding({
+            left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor(this.getThemeColor())
+          .onClick(() => {
+            this.getUIContext().showTextPickerDialog({
+              range: this.dailyGoalTargetNames,
+              selected: this.newGoalTargetIndex,
+              onAccept: (value: TextPickerResult) => {
+                this.newGoalTargetIndex = Number(value.index);
+              }
+            });
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      Text('\u786E\u8BA4\u6DFB\u52A0')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(Color.White)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .padding({
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+        .backgroundColor(this.getThemeColor())
+        .onClick(() => {
+          this.confirmAddDailyGoal();
+        })
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(this.getThemeLightColor())
+  }
+
+  @Builder
+  outfitStore() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        this.sectionTitle('\u5BA0\u7269\u88C5\u626E\u5546\u5E97')
+        Text(`\u79EF\u5206 ${this.score}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+      }
+      .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.outfitNames, (outfitName: string, index: number) => {
+          Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+            Text(outfitName)
+              .fontSize($r('sys.float.ohos_id_text_size_body1'))
+              .fontColor(this.equippedOutfitIndex === index ? Color.White : '#182431')
+              .maxLines(1)
+            Text(this.ownedOutfits[index] ? (this.equippedOutfitIndex === index ? '\u88C5\u5907\u4E2D' : '\u5DF2\u62E5\u6709') :
+              `${this.outfitPrices[index]}\u79EF\u5206`)
+              .fontSize($r('sys.float.ohos_id_text_size_body2'))
+              .fontColor(this.equippedOutfitIndex === index ? Color.White : $r('sys.color.ohos_id_color_text_secondary'))
+          }
+          .width('48%')
+          .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+          .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor(this.equippedOutfitIndex === index ? this.getThemeColor() : this.getThemeLightColor())
+          .onClick(() => {
+            this.handleOutfitTap(index);
+          })
+        }, (outfitName: string) => outfitName)
+      }
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
   petCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.sectionTitle('\u5BA0\u7269\u6210\u957F')
@@ -1228,6 +1850,8 @@ struct ToDoList {
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor($r('sys.color.ohos_id_color_text_secondary'))
         .width(Constant.PERCENT_FULL)
+      this.deliveryStatusRow('\u5F53\u524D\u88C5\u626E', this.getEquippedOutfitName())
+      this.deliveryStatusRow('\u5DF2\u62E5\u6709\u88C5\u626E', `${this.getOwnedOutfitCount()} / ${this.outfitNames.length}`)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
@@ -1561,8 +2185,8 @@ struct ToDoList {
           ListItem() {
             ToDoListItem({
               toDoItem: toDoItem,
-              toggleTodoStatus: (item: ToDo) => {
-                this.toggleTodoStatus(item);
+              onToggleComplete: (itemKey: string) => {
+                this.toggleTaskCompleteByKey(itemKey);
               },
               deliverTodo: (item: ToDo) => {
                 this.showDeliveryPicker(item);
@@ -1579,7 +2203,7 @@ struct ToDoList {
             })
           }
           .swipeAction({ end: this.itemEnd(toDoItem), edgeEffect: SwipeEdgeEffect.Spring })
-        }, (toDoItem: ToDo) => toDoItem.key)
+        }, (toDoItem: ToDo) => `${toDoItem.key}_${toDoItem.isCompleted}`)
       }
       .layoutWeight(1)
       .listDirection(Axis.Vertical)
@@ -1651,6 +2275,7 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       this.checkInCard()
+      this.dailyGoalCard()
       this.petMiniCard()
       this.focusMiniCard()
       this.countdownCard()
@@ -1745,10 +2370,16 @@ struct ToDoList {
       this.statisticsPanel()
       this.progressCard('\u4EFB\u52A1\u5B8C\u6210\u7387', this.getCompletionRate(), `${this.getCompletedCount()} / ${this.getTotalCount()}`)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetric('\u4ECA\u65E5\u5B8C\u6210', `${this.getCompletedCount()}`)
+        this.overviewMetric('\u4ECA\u65E5\u5B8C\u6210', `${this.todayCompletedCount}`)
         this.overviewMetric('\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`)
       }
       .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206\u949F`)
+        this.overviewMetric('\u8FDE\u7EED\u8FBE\u6210', `${this.dailyGoalStreak}\u5929`)
+      }
+      .width(Constant.PERCENT_FULL)
+      this.dailyGoalCard()
       this.progressCard('\u7D2F\u8BA1\u4E13\u6CE8\u65F6\u957F', Math.min(100, Math.round(this.getTotalFocusMinutes() * 100 / 300)),
         `${this.getTotalFocusMinutes()}\u5206\u949F`)
     }
@@ -1760,6 +2391,7 @@ struct ToDoList {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.pageTitle('\u5BA0\u7269')
       this.petCard()
+      this.outfitStore()
       this.achievementBadgeCard()
       this.themeStore()
     }

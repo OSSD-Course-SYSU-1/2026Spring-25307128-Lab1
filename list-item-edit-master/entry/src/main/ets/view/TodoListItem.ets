@@ -15,12 +15,13 @@
 
 import { STYLE_CONFIG, Constant } from '../common/Constants';
 import { ToDo } from '../model/ToDo';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 @Component
 export struct ToDoListItem {
   UIContext = this.getUIContext()
   @ObjectLink toDoItem: ToDo;
-  toggleTodoStatus: (item: ToDo) => void = () => {};
+  onToggleComplete: (key: string) => void = () => {};
   deliverTodo: (item: ToDo) => void = () => {};
   startFocus: (item: ToDo) => void = () => {};
   showTodoDetail: (item: ToDo) => void = () => {};
@@ -31,9 +32,8 @@ export struct ToDoListItem {
    * Add a completed data item.
    */
   addAchieveData() {
-    this.UIContext.animateTo({ duration: STYLE_CONFIG.ANIMATION_DURATION }, () => {
-      this.toggleTodoStatus(this.toDoItem);
-    });
+    hilog.info(0x0000, 'TodoListItem', `click complete button, key=${this.toDoItem.key}, isCompleted=${this.toDoItem.isCompleted}`);
+    this.onToggleComplete(this.toDoItem.key);
   }
 
   getPriorityText(): string {
@@ -94,11 +94,10 @@ export struct ToDoListItem {
 
   @Builder
   actionButton(label: string, textColor: ResourceColor, backgroundColor: ResourceColor, action: () => void) {
-    Text(label)
+    Button(label)
+      .type(ButtonType.Normal)
       .fontSize($r('sys.float.ohos_id_text_size_body2'))
       .fontColor(textColor)
-      .textAlign(TextAlign.Center)
-      .maxLines(1)
       .padding({
         left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
         right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
@@ -108,6 +107,7 @@ export struct ToDoListItem {
       .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
       .backgroundColor(backgroundColor)
       .height(30)
+      .enabled(true)
       .onClick(action)
   }
 
@@ -140,6 +140,7 @@ export struct ToDoListItem {
           Text(`${this.toDoItem.name}`)
             .maxLines(1)
             .fontSize($r('sys.float.ohos_id_text_size_headline9'))
+            .fontColor(this.toDoItem.isCompleted ? '#8A8A8A' : '#182431')
             .layoutWeight(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .decoration({ type: this.toDoItem.isCompleted ? TextDecorationType.LineThrough : TextDecorationType.None })
@@ -190,35 +191,36 @@ export struct ToDoListItem {
       .width(Constant.PERCENT_FULL)
       .height(22)
 
-      Scroll() {
-        Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          if (!this.isEdited) {
-            this.actionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210', Color.White,
-              this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'), () => {
-                this.addAchieveData();
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        if (!this.isEdited) {
+          this.actionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210', Color.White,
+            this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'), () => {
+              this.addAchieveData();
+            })
+          Scroll() {
+            Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+              this.actionButton('\u4E13\u6CE8', Color.White, '#0A59F7', () => {
+                this.startFocus(this.toDoItem);
               })
-            this.actionButton('\u4E13\u6CE8', Color.White, '#0A59F7', () => {
-              this.startFocus(this.toDoItem);
-            })
-            this.actionButton('\u6295\u9001', '#182431', '#F1F3F5', () => {
-              this.deliverTodo(this.toDoItem);
-            })
-            this.actionButton('\u8BE6\u60C5', '#182431', '#F7F8FA', () => {
-              this.showTodoDetail(this.toDoItem);
-            })
+              this.actionButton('\u6295\u9001', '#182431', '#F1F3F5', () => {
+                this.deliverTodo(this.toDoItem);
+              })
+              this.actionButton('\u8BE6\u60C5', '#182431', '#F7F8FA', () => {
+                this.showTodoDetail(this.toDoItem);
+              })
+              this.actionButton('\u7F16\u8F91', '#182431', '#F7F8FA', () => {
+                this.isEdited = true;
+              })
+            }
+            .height(34)
           }
-          Blank()
-          if (!this.isEdited) {
-            this.actionButton('\u7F16\u8F91', '#182431', '#F7F8FA', () => {
-              this.isEdited = true;
-            })
-          }
+          .layoutWeight(1)
+          .scrollable(ScrollDirection.Horizontal)
+          .scrollBar(BarState.Off)
         }
-        .height(34)
       }
       .width(Constant.PERCENT_FULL)
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
+      .height(34)
 
       if (this.isEdited) {
         Row() {
