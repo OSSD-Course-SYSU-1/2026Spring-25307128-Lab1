@@ -35,6 +35,7 @@ interface StoredToDo {
   isCompleted?: boolean;
   focusCount?: number;
   focusDurationMinutes?: number;
+  deadline?: number;
 }
 
 interface StoredAppState {
@@ -87,6 +88,7 @@ struct ToDoList {
   @State receivedTransferIds: string[] = [];
   @State searchKeyword: string = '';
   @State sortIndex: number = 0;
+  @State currentTab: number = 0;
   @State isWideScreen: boolean = false;
   @State focusTaskKey: string = '';
   @State focusRemainingSeconds: number = 0;
@@ -106,7 +108,10 @@ struct ToDoList {
   private themePrices: number[] = [0, 0, 50, 80, 120, 200];
   private deliveryDevices: string[] = ['\u624B\u673A', '\u5E73\u677F', '\u667A\u6167\u5C4F', '\u7535\u8111'];
   private sortNames: string[] = ['\u521B\u5EFA\u65F6\u95F4', '\u540D\u79F0', '\u5B8C\u6210\u72B6\u6001', '\u4F18\u5148\u7EA7'];
+  private tabNames: string[] = ['\u9996\u9875', '\u4EFB\u52A1', '\u65E5\u5386', '\u4E13\u6CE8', '\u7EDF\u8BA1', '\u5BA0\u7269', '\u8DE8\u8BBE\u5907', '\u6211\u7684'];
   private priorityNames: string[] = ['\u4F4E', '\u4E2D', '\u9AD8'];
+  private deadlineNames: string[] = ['\u65E0\u622A\u6B62\u65E5\u671F', '\u4ECA\u5929', '\u660E\u5929', '3\u5929\u540E', '\u4E00\u5468\u540E'];
+  private deadlineOffsets: number[] = [-1, 0, 1, 3, 7];
   private focusMinuteNames: string[] = ['5\u5206\u949F', '15\u5206\u949F', '25\u5206\u949F'];
   private focusMinuteValues: number[] = [5, 15, 25];
 
@@ -211,7 +216,8 @@ struct ToDoList {
       priority,
       this.getStoredBoolean(item.isCompleted, false),
       Math.max(0, this.getStoredNumber(item.focusCount, 0)),
-      Math.max(0, this.getStoredNumber(item.focusDurationMinutes, 0))
+      Math.max(0, this.getStoredNumber(item.focusDurationMinutes, 0)),
+      Math.max(0, this.getStoredNumber(item.deadline, 0))
     );
   }
 
@@ -315,7 +321,8 @@ struct ToDoList {
       priority: item.priority,
       isCompleted: item.isCompleted,
       focusCount: item.focusCount,
-      focusDurationMinutes: item.focusDurationMinutes
+      focusDurationMinutes: item.focusDurationMinutes,
+      deadline: item.deadline
     };
   }
 
@@ -326,6 +333,53 @@ struct ToDoList {
     let monthText = month < 10 ? `0${month}` : `${month}`;
     let dateText = date < 10 ? `0${date}` : `${date}`;
     return `${currentDate.getFullYear()}-${monthText}-${dateText}`;
+  }
+
+  getStartOfDay(timestamp: number): number {
+    let dateValue = new Date(timestamp);
+    dateValue.setHours(0, 0, 0, 0);
+    return dateValue.getTime();
+  }
+
+  getTodayStart(): number {
+    return this.getStartOfDay(Date.now());
+  }
+
+  getDeadlineByOffset(offset: number): number {
+    if (offset < 0) {
+      return 0;
+    }
+    return this.getTodayStart() + offset * 24 * 60 * 60 * 1000;
+  }
+
+  getDeadlineText(deadline: number): string {
+    if (deadline <= 0) {
+      return '\u65E0\u622A\u6B62\u65E5\u671F';
+    }
+    let diffDays = Math.round((this.getStartOfDay(deadline) - this.getTodayStart()) / (24 * 60 * 60 * 1000));
+    if (diffDays === 0) {
+      return '\u4ECA\u5929\u622A\u6B62';
+    }
+    if (diffDays > 0) {
+      return `\u8FD8\u6709 ${diffDays} \u5929`;
+    }
+    return `\u5DF2\u903E\u671F ${Math.abs(diffDays)} \u5929`;
+  }
+
+  getDeadlineDateText(deadline: number): string {
+    if (deadline <= 0) {
+      return '\u65E0';
+    }
+    return this.formatDateOnly(deadline);
+  }
+
+  formatDateOnly(timestamp: number): string {
+    let dateValue = new Date(timestamp);
+    let month = dateValue.getMonth() + 1;
+    let date = dateValue.getDate();
+    let monthText = month < 10 ? `0${month}` : `${month}`;
+    let dateText = date < 10 ? `0${date}` : `${date}`;
+    return `${dateValue.getFullYear()}-${monthText}-${dateText}`;
   }
 
   formatDateTime(timestamp: number): string {
@@ -561,9 +615,21 @@ struct ToDoList {
         let availableThings = this.getUIContext().getHostContext()?.resourceManager
           .getStringArrayValueSync($r('app.strarray.available_things').id);
         if (availableThings) {
-          this.toDoData = [new ToDo(availableThings[Number(value.index)], priority), ...this.toDoData];
-          this.saveAppState();
+          this.showDeadlinePickerForNewTodo(availableThings[Number(value.index)], priority);
         }
+      },
+    });
+  }
+
+  showDeadlinePickerForNewTodo(todoName: string, priority: number) {
+    this.getUIContext().showTextPickerDialog({
+      range: this.deadlineNames,
+      selected: 1,
+      onAccept: (value: TextPickerResult) => {
+        let deadline = this.getDeadlineByOffset(this.deadlineOffsets[Number(value.index)]);
+        this.toDoData = [new ToDo(todoName, priority, deadline), ...this.toDoData];
+        this.showToastMessage(deadline > 0 ? `\u5DF2\u65B0\u589E\uFF0C${this.getDeadlineText(deadline)}` : '\u5DF2\u65B0\u589E');
+        this.saveAppState();
       },
     });
   }
@@ -936,7 +1002,8 @@ struct ToDoList {
       priority: item.priority,
       isCompleted: item.isCompleted,
       focusCount: item.focusCount,
-      focusDurationMinutes: item.focusDurationMinutes
+      focusDurationMinutes: item.focusDurationMinutes,
+      deadline: item.deadline
     };
     return {
       transferId: this.taskTransferService.buildTransferId(),
@@ -958,7 +1025,8 @@ struct ToDoList {
       this.normalizePriority(payload.task.priority),
       false,
       Math.max(0, payload.task.focusCount),
-      Math.max(0, payload.task.focusDurationMinutes)
+      Math.max(0, payload.task.focusDurationMinutes),
+      Math.max(0, payload.task.deadline)
     );
     this.toDoData = [remoteTask, ...this.toDoData];
     this.receivedTransferIds = [payload.transferId, ...this.receivedTransferIds].slice(0, 100);
@@ -977,6 +1045,8 @@ struct ToDoList {
         `\u4F18\u5148\u7EA7\uFF1A${this.getPriorityName(item.priority)}\n` +
         `\u5B8C\u6210\u72B6\u6001\uFF1A${item.isCompleted ? '\u5DF2\u5B8C\u6210' : '\u672A\u5B8C\u6210'}\n` +
         `\u521B\u5EFA\u65F6\u95F4\uFF1A${this.formatDateTime(item.createdAt)}\n` +
+        `\u622A\u6B62\u65E5\u671F\uFF1A${this.getDeadlineDateText(item.deadline)}\n` +
+        `\u5012\u8BA1\u65F6\uFF1A${this.getDeadlineText(item.deadline)}\n` +
         `\u4E13\u6CE8\u6B21\u6570\uFF1A${item.focusCount}\u6B21\n` +
         `\u4E13\u6CE8\u65F6\u957F\uFF1A${item.focusDurationMinutes}\u5206\u949F`,
       primaryButton: {
@@ -1519,6 +1589,461 @@ struct ToDoList {
     .height(Constant.PERCENT_FULL)
   }
 
+  @Builder
+  overviewMetric(label: string, value: string) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(value)
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(this.getThemeColor())
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+    }
+    .layoutWeight(1)
+    .padding(STYLE_CONFIG.ICON_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(this.getThemeLightColor())
+  }
+
+  @Builder
+  pageContainer() {
+    if (this.currentTab === 1) {
+      this.taskListPanel()
+    } else {
+      Scroll() {
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          if (this.currentTab === 0) {
+            this.homePage()
+          } else if (this.currentTab === 2) {
+            this.calendarPage()
+          } else if (this.currentTab === 3) {
+            this.focusPage()
+          } else if (this.currentTab === 4) {
+            this.statisticsPage()
+          } else if (this.currentTab === 5) {
+            this.petPage()
+          } else if (this.currentTab === 6) {
+            this.devicePage()
+          } else {
+            this.profilePage()
+          }
+        }
+        .width(Constant.PERCENT_FULL)
+        .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+      }
+      .layoutWeight(1)
+      .edgeEffect(EdgeEffect.Spring)
+    }
+  }
+
+  @Builder
+  homePage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u4ECA\u65E5\u6982\u89C8')
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u4ECA\u65E5\u4EFB\u52A1', `${this.getTotalCount()}`)
+        this.overviewMetric('\u4ECA\u65E5\u5B8C\u6210\u7387', `${this.getCompletionRate()}%`)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`)
+        this.overviewMetric('\u5F53\u524D\u79EF\u5206', `${this.score}`)
+      }
+      .width(Constant.PERCENT_FULL)
+      this.checkInCard()
+      this.petMiniCard()
+      this.focusMiniCard()
+      this.countdownCard()
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  calendarPage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u65E5\u5386\u4E0E\u5012\u8BA1\u65F6')
+      this.countdownCard()
+      this.calendarGroupCard('\u5DF2\u903E\u671F', this.getOverdueTodos())
+      this.calendarGroupCard('\u4ECA\u5929', this.getTodosByDeadlineRange(0, 0))
+      this.calendarGroupCard('\u660E\u5929', this.getTodosByDeadlineRange(1, 1))
+      this.calendarGroupCard('\u672C\u5468', this.getTodosByDeadlineRange(2, 7))
+      this.calendarGroupCard('\u4EE5\u540E', this.getFutureTodosAfterWeek())
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  focusPage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u756A\u8304\u4E13\u6CE8')
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u5F53\u524D\u4EFB\u52A1', this.getFocusTaskName())
+        this.overviewMetric('\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u672C\u8F6E\u65F6\u957F', this.focusTotalSeconds > 0 ? `${Math.round(this.focusTotalSeconds / 60)}\u5206\u949F` : '25\u5206\u949F')
+        this.overviewMetric('\u7D2F\u8BA1\u4E13\u6CE8', `${this.getTotalFocusMinutes()}\u5206\u949F`)
+      }
+      .width(Constant.PERCENT_FULL)
+      this.focusCard()
+      if (this.focusTaskKey.length > 0) {
+        Text('\u5B8C\u6210\u672C\u8F6E\u4E13\u6CE8')
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor(Color.White)
+          .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+          .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+          .backgroundColor(this.getThemeColor())
+          .onClick(() => {
+            this.completeFocus();
+          })
+      }
+      this.quickFocusTasks()
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  quickFocusTasks() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.sectionTitle('\u5FEB\u901F\u5F00\u59CB\u4E13\u6CE8')
+      ForEach(this.getAllTodos().filter((item: ToDo) => !item.isCompleted).slice(0, 3), (item: ToDo) => {
+        Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text(item.name)
+            .fontSize($r('sys.float.ohos_id_text_size_body1'))
+            .fontColor('#182431')
+            .layoutWeight(1)
+            .maxLines(1)
+          Text('\u5F00\u59CB')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(Color.White)
+            .padding({
+              left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+              right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+            })
+            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .backgroundColor(this.getThemeColor())
+            .onClick(() => {
+              this.showFocusPicker(item);
+            })
+        }
+        .width(Constant.PERCENT_FULL)
+      }, (item: ToDo) => item.key)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  statisticsPage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u7EDF\u8BA1')
+      this.statisticsPanel()
+      this.progressCard('\u4EFB\u52A1\u5B8C\u6210\u7387', this.getCompletionRate(), `${this.getCompletedCount()} / ${this.getTotalCount()}`)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.overviewMetric('\u4ECA\u65E5\u5B8C\u6210', `${this.getCompletedCount()}`)
+        this.overviewMetric('\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`)
+      }
+      .width(Constant.PERCENT_FULL)
+      this.progressCard('\u7D2F\u8BA1\u4E13\u6CE8\u65F6\u957F', Math.min(100, Math.round(this.getTotalFocusMinutes() * 100 / 300)),
+        `${this.getTotalFocusMinutes()}\u5206\u949F`)
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  petPage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u5BA0\u7269')
+      this.petCard()
+      this.achievementBadgeCard()
+      this.themeStore()
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  devicePage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u8DE8\u8BBE\u5907')
+      this.deliveryRecordCard()
+      this.deviceTestGuideCard()
+      this.mockDeliveryNoteCard()
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  profilePage() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.pageTitle('\u6211\u7684')
+      this.profileInfoCard()
+      this.themeStore()
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  petMiniCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Text(this.getPetEmoji())
+          .fontSize(40)
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text(`Lv.${this.getPetLevel()} ${this.getPetName()}`)
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(this.getThemeColor())
+          Text(`\u6210\u957F\u503C ${this.petExp} / \u8DDD\u4E0B\u4E00\u7EA7 ${this.getPetExpToNextLevel()}`)
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      Row() {
+        Row()
+          .height(8)
+          .width(`${this.getPetProgress()}%`)
+          .borderRadius(4)
+          .backgroundColor(this.getThemeColor())
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(8)
+      .borderRadius(4)
+      .backgroundColor(Color.White)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(this.getThemeLightColor())
+  }
+
+  @Builder
+  focusMiniCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.sectionTitle('\u4E13\u6CE8\u72B6\u6001')
+      Text(this.focusTaskKey.length > 0 ? this.getFocusTaskName() : '\u6682\u65E0\u8FDB\u884C\u4E2D\u4E13\u6CE8')
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor('#182431')
+        .width(Constant.PERCENT_FULL)
+      Text(this.focusTaskKey.length > 0 ? this.formatFocusTime() : `\u4ECA\u65E5\u756A\u8304 ${this.todayPomodoroCount}`)
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(this.getThemeColor())
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  progressCard(title: string, percent: number, detail: string) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Row() {
+        Text(title)
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor('#182431')
+          .layoutWeight(1)
+        Text(detail)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+      }
+      Row() {
+        Row()
+          .height(8)
+          .width(`${percent}%`)
+          .borderRadius(4)
+          .backgroundColor(this.getThemeColor())
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(8)
+      .borderRadius(4)
+      .backgroundColor(this.getThemeLightColor())
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  getOpenTodosWithDeadline(): ToDo[] {
+    return this.getAllTodos()
+      .filter((item: ToDo) => !item.isCompleted && item.deadline > 0)
+      .sort((firstItem: ToDo, secondItem: ToDo) => firstItem.deadline - secondItem.deadline);
+  }
+
+  getUpcomingTodos(): ToDo[] {
+    let today = this.getTodayStart();
+    return this.getOpenTodosWithDeadline()
+      .filter((item: ToDo) => item.deadline >= today)
+      .slice(0, 3);
+  }
+
+  getOverdueTodos(): ToDo[] {
+    let today = this.getTodayStart();
+    return this.getOpenTodosWithDeadline().filter((item: ToDo) => item.deadline < today);
+  }
+
+  getTodosByDeadlineRange(startOffset: number, endOffset: number): ToDo[] {
+    let startTime = this.getDeadlineByOffset(startOffset);
+    let endTime = this.getDeadlineByOffset(endOffset);
+    return this.getOpenTodosWithDeadline().filter((item: ToDo) => item.deadline >= startTime && item.deadline <= endTime);
+  }
+
+  getFutureTodosAfterWeek(): ToDo[] {
+    let endOfWeek = this.getDeadlineByOffset(7);
+    return this.getOpenTodosWithDeadline().filter((item: ToDo) => item.deadline > endOfWeek);
+  }
+
+  @Builder
+  countdownCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.sectionTitle('\u6700\u8FD1\u622A\u6B62')
+      if (this.getUpcomingTodos().length === 0) {
+        Text('\u6682\u65E0\u5373\u5C06\u622A\u6B62\u7684\u4EFB\u52A1')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .width(Constant.PERCENT_FULL)
+      }
+      ForEach(this.getUpcomingTodos(), (item: ToDo) => {
+        this.calendarTaskRow(item)
+      }, (item: ToDo) => item.key)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  calendarGroupCard(title: string, items: ToDo[]) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Row() {
+        this.sectionTitle(title)
+        Text(`${items.length}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+      }
+      .width(Constant.PERCENT_FULL)
+      if (items.length === 0) {
+        Text('\u6682\u65E0\u4EFB\u52A1')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .width(Constant.PERCENT_FULL)
+      }
+      ForEach(items, (item: ToDo) => {
+        this.calendarTaskRow(item)
+      }, (item: ToDo) => item.key)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  calendarTaskRow(item: ToDo) {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(item.name)
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor('#182431')
+          .maxLines(1)
+        Text(this.getDeadlineDateText(item.deadline))
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      Text(this.getDeadlineText(item.deadline))
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.getDeadlineText(item.deadline).startsWith('\u5DF2\u903E\u671F') ? '#D94838' : this.getThemeColor())
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding({
+      top: STYLE_CONFIG.ICON_GUTTER,
+      bottom: STYLE_CONFIG.ICON_GUTTER
+    })
+    .onClick(() => {
+      this.showTodoDetail(item);
+    })
+  }
+
+  @Builder
+  achievementBadgeCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.sectionTitle('\u6210\u5C31\u5FBD\u7AE0')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.badgeItem('\u521D\u5B66\u8005', this.getTotalCount() > 0)
+        this.badgeItem('\u884C\u52A8\u6D3E', this.getCompletedCount() >= 3)
+        this.badgeItem('\u4E13\u6CE8\u8005', this.getTotalFocusCount() >= 3)
+        this.badgeItem('\u575A\u6301\u6253\u5361', this.hasCheckedToday)
+      }
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  badgeItem(label: string, unlocked: boolean) {
+    Text(label)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(unlocked ? Color.White : $r('sys.color.ohos_id_color_text_secondary'))
+      .padding({
+        left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+        right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+        top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+        bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+      })
+      .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+      .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+      .backgroundColor(unlocked ? this.getThemeColor() : '#F1F3F5')
+  }
+
+  @Builder
+  mockDeliveryNoteCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.sectionTitle('\u6A21\u62DF\u8BB0\u5F55\u8BF4\u660E')
+      Text('\u6A21\u62DF\u8BB0\u5F55\u53EA\u4FDD\u5B58\u672C\u5730\u6587\u5B57\u8BB0\u5F55\uFF0C\u4E0D\u662F\u771F\u5B9E\u8DE8\u8BBE\u5907\u6295\u9001\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  profileInfoCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.sectionTitle('\u5E94\u7528\u4FE1\u606F')
+      this.deliveryStatusRow('\u5F53\u524D\u4E3B\u9898', this.themeNames[this.themeIndex])
+      this.deliveryStatusRow('\u5F53\u524D\u79EF\u5206', `${this.score}`)
+      this.deliveryStatusRow('\u6570\u636E\u4FDD\u5B58', '\u672C\u5730Preferences\u81EA\u52A8\u4FDD\u5B58')
+      this.deliveryStatusRow('App', '\u5F85\u529E\u3001\u756A\u8304\u3001\u5BA0\u7269\u6210\u957F\u4E0E\u8DE8\u8BBE\u5907\u6295\u9001')
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  pageTitle(title: string) {
+    Text(title)
+      .fontSize($r('sys.float.ohos_id_text_size_headline7'))
+      .fontColor('#182431')
+      .width(Constant.PERCENT_FULL)
+  }
+
   // Item Swipe left to display the toolbar.
   @Builder
   itemEnd(item: ToDo) {
@@ -1570,14 +2095,9 @@ struct ToDoList {
 
       if (this.isWideScreen) {
         Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-          Scroll() {
-            this.dashboardPanel()
-          }
-          .width('38%')
-          .height(Constant.PERCENT_FULL)
-
+          this.sideNavigation()
           Column() {
-            this.taskListPanel()
+            this.pageContainer()
           }
           .layoutWeight(1)
           .height(Constant.PERCENT_FULL)
@@ -1585,98 +2105,16 @@ struct ToDoList {
         .layoutWeight(1)
         .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
       } else {
-        List({ initialIndex: 0, space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-          ListItem() {
-            Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-              Text(`\u5F53\u524D\u79EF\u5206\uFF1A${this.score}`)
-                .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-                .fontColor(this.getThemeColor())
-                .width(Constant.PERCENT_FULL)
-              this.checkInCard()
-              this.focusCard()
-            }
-          }
-
-          ListItem() {
-            Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-              Text('\u4EFB\u52A1\u5217\u8868')
-                .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-                .fontColor('#182431')
-                .layoutWeight(1)
-              Text(`\u603B\u6570 ${this.getTotalCount()} / \u5DF2\u5B8C\u6210 ${this.getCompletedCount()}`)
-                .fontSize($r('sys.float.ohos_id_text_size_body2'))
-                .fontColor(this.getThemeColor())
-            }
-          }
-
-          ListItem() {
-            this.searchSortPanel()
-          }
-
-          if (this.getVisibleTodos().length === 0) {
-            ListItem() {
-              Text(this.getTotalCount() === 0 ? '\u70B9\u51FB\u65B0\u589E\u5F85\u529E\uFF0C\u65B0\u4EFB\u52A1\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC' :
-                '\u6CA1\u6709\u5339\u914D\u7684\u5F85\u529E')
-                .fontSize($r('sys.float.ohos_id_text_size_body1'))
-                .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                .width(Constant.PERCENT_FULL)
-                .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
-                .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-                .backgroundColor(Color.White)
-            }
-          }
-
-          ForEach(this.getVisibleTodos(), (toDoItem: ToDo) => {
-            ListItem() {
-              ToDoListItem({
-                toDoItem: toDoItem,
-                toggleTodoStatus: (item: ToDo) => {
-                  this.toggleTodoStatus(item);
-                },
-                deliverTodo: (item: ToDo) => {
-                  this.showDeliveryPicker(item);
-                },
-                startFocus: (item: ToDo) => {
-                  this.showFocusPicker(item);
-                },
-                showTodoDetail: (item: ToDo) => {
-                  this.showTodoDetail(item);
-                },
-                updateTodoItem: (item: ToDo) => {
-                  this.updateTodoItem(item);
-                }
-              })
-            }
-            .swipeAction({ end: this.itemEnd(toDoItem), edgeEffect: SwipeEdgeEffect.Spring })
-          }, (toDoItem: ToDo) => toDoItem.key)
-
-          ListItem() {
-            this.petCard()
-          }
-
-          ListItem() {
-            this.statisticsPanel()
-          }
-
-          ListItem() {
-            this.themeStore()
-          }
-
-          ListItem() {
-            this.deliveryRecordCard()
-          }
-
-          ListItem() {
-            this.deviceTestGuideCard()
-          }
+        Column() {
+          this.pageContainer()
+          this.bottomNavigation()
         }
         .layoutWeight(1)
-        .listDirection(Axis.Vertical)
-        .edgeEffect(EdgeEffect.Spring)
         .padding({
           top: STYLE_CONFIG.LIST_ITEM_GUTTER,
           left: $r('sys.float.ohos_id_default_padding_start'),
           right: $r('sys.float.ohos_id_default_padding_end'),
+          bottom: STYLE_CONFIG.LIST_ITEM_GUTTER
         })
       }
     }
@@ -1686,5 +2124,76 @@ struct ToDoList {
     .onAreaChange((oldValue: Area, newValue: Area) => {
       this.isWideScreen = Number(newValue.width) >= 720;
     })
+  }
+
+  @Builder
+  sideNavigation() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      ForEach(this.tabNames, (tabName: string, index: number) => {
+        this.navButton(tabName, index, true)
+      }, (tabName: string) => tabName)
+    }
+    .width(132)
+    .height(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  bottomNavigation() {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      ForEach(this.tabNames, (tabName: string, index: number) => {
+        this.navButton(tabName, index, false)
+      }, (tabName: string) => tabName)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding({
+      top: STYLE_CONFIG.ICON_GUTTER,
+      bottom: STYLE_CONFIG.ICON_GUTTER
+    })
+    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  navButton(label: string, index: number, isSide: boolean) {
+    if (isSide) {
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.currentTab === index ? Color.White : this.getThemeColor())
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .padding({
+          left: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          right: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
+        })
+        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+        .backgroundColor(this.currentTab === index ? this.getThemeColor() : this.getThemeLightColor())
+        .width(Constant.PERCENT_FULL)
+        .onClick(() => {
+          this.currentTab = index;
+        })
+    } else {
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.currentTab === index ? Color.White : this.getThemeColor())
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .padding({
+          left: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          right: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
+        })
+        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+        .backgroundColor(this.currentTab === index ? this.getThemeColor() : this.getThemeLightColor())
+        .layoutWeight(1)
+        .onClick(() => {
+          this.currentTab = index;
+        })
+    }
   }
 }

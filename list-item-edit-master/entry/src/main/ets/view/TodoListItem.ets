@@ -56,8 +56,63 @@ export struct ToDoListItem {
     return '#1E8E3E';
   }
 
+  getStartOfDay(timestamp: number): number {
+    let dateValue = new Date(timestamp);
+    dateValue.setHours(0, 0, 0, 0);
+    return dateValue.getTime();
+  }
+
+  getDeadlineText(): string {
+    if (this.toDoItem.deadline <= 0) {
+      return '\u65E0\u622A\u6B62\u65E5\u671F';
+    }
+    let diffDays = Math.round((this.getStartOfDay(this.toDoItem.deadline) - this.getStartOfDay(Date.now())) /
+      (24 * 60 * 60 * 1000));
+    if (diffDays === 0) {
+      return '\u4ECA\u5929\u622A\u6B62';
+    }
+    if (diffDays > 0) {
+      return `\u8FD8\u6709 ${diffDays} \u5929`;
+    }
+    return `\u5DF2\u903E\u671F ${Math.abs(diffDays)} \u5929`;
+  }
+
+  getDeadlineColor(): string {
+    if (this.toDoItem.deadline <= 0) {
+      return '#6B7280';
+    }
+    let diffDays = Math.round((this.getStartOfDay(this.toDoItem.deadline) - this.getStartOfDay(Date.now())) /
+      (24 * 60 * 60 * 1000));
+    if (diffDays < 0) {
+      return '#D94838';
+    }
+    if (diffDays <= 1) {
+      return '#F57C00';
+    }
+    return '#1E8E3E';
+  }
+
+  @Builder
+  actionButton(label: string, textColor: ResourceColor, backgroundColor: ResourceColor, action: () => void) {
+    Text(label)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(textColor)
+      .textAlign(TextAlign.Center)
+      .maxLines(1)
+      .padding({
+        left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+        right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
+        top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+        bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+      })
+      .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+      .backgroundColor(backgroundColor)
+      .height(30)
+      .onClick(action)
+  }
+
   build() {
-    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
         if (!this.isEdited) {
           Row() {
@@ -86,6 +141,7 @@ export struct ToDoListItem {
             .maxLines(1)
             .fontSize($r('sys.float.ohos_id_text_size_headline9'))
             .layoutWeight(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
             .decoration({ type: this.toDoItem.isCompleted ? TextDecorationType.LineThrough : TextDecorationType.None })
             .onClick(() => {
               this.showTodoDetail(this.toDoItem);
@@ -117,74 +173,56 @@ export struct ToDoListItem {
               focusControl.requestFocus('textEdit');
             })
         }
-        Blank()
       }
       .width(Constant.PERCENT_FULL)
+      .height(28)
 
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
         Text(`\u4E13\u6CE8 ${this.toDoItem.focusCount}\u6B21 / ${this.toDoItem.focusDurationMinutes}\u5206\u949F`)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor($r('sys.color.ohos_id_color_text_secondary'))
           .layoutWeight(1)
-        if (!this.isEdited) {
-          Text(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(Color.White)
-            .padding({
-              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
-              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
-              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-            })
-            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-            .backgroundColor(this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'))
-            .onClick(() => {
-              this.addAchieveData();
-            })
-          Text('\u4E13\u6CE8')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(Color.White)
-            .padding({
-              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
-              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
-              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-            })
-            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-            .backgroundColor('#0A59F7')
-            .onClick(() => {
+        Text(this.getDeadlineText())
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getDeadlineColor())
+          .maxLines(1)
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(22)
+
+      Scroll() {
+        Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          if (!this.isEdited) {
+            this.actionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210', Color.White,
+              this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'), () => {
+                this.addAchieveData();
+              })
+            this.actionButton('\u4E13\u6CE8', Color.White, '#0A59F7', () => {
               this.startFocus(this.toDoItem);
             })
-          Text('\u6295\u9001')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor('#182431')
-            .padding({
-              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
-              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 3,
-              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-            })
-            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-            .backgroundColor('#F1F3F5')
-            .onClick(() => {
+            this.actionButton('\u6295\u9001', '#182431', '#F1F3F5', () => {
               this.deliverTodo(this.toDoItem);
             })
-          Text('\u8BE6\u60C5')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor('#182431')
-            .padding({
-              left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
-              right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
-              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-            })
-            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-            .backgroundColor('#F7F8FA')
-            .onClick(() => {
+            this.actionButton('\u8BE6\u60C5', '#182431', '#F7F8FA', () => {
               this.showTodoDetail(this.toDoItem);
             })
+          }
+          Blank()
+          if (!this.isEdited) {
+            this.actionButton('\u7F16\u8F91', '#182431', '#F7F8FA', () => {
+              this.isEdited = true;
+            })
+          }
         }
-        if (this.isEdited) {
+        .height(34)
+      }
+      .width(Constant.PERCENT_FULL)
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+
+      if (this.isEdited) {
+        Row() {
+          Blank()
           Image($r('app.media.ic_public_ok_filled'))
             .width(STYLE_CONFIG.MENU_IMAGE_SIZE)
             .aspectRatio(1)
@@ -192,23 +230,18 @@ export struct ToDoListItem {
               this.updateTodoItem(this.toDoItem);
               this.isEdited = false;
             })
-        } else {
-          Text($r('app.string.edit'))
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .onClick(() => {
-              this.isEdited = true;
-            })
         }
+        .width(Constant.PERCENT_FULL)
+        .height(30)
       }
-      .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
-    .height(112)
+    .constraintSize({ minHeight: 132 })
     .padding({
       left: $r('sys.float.ohos_id_default_padding_start'),
       right: $r('sys.float.ohos_id_default_padding_end'),
-      top: STYLE_CONFIG.TODO_ITEM_PADDING_VERTICAL,
-      bottom: STYLE_CONFIG.TODO_ITEM_PADDING_VERTICAL
+      top: STYLE_CONFIG.LIST_ITEM_GUTTER,
+      bottom: STYLE_CONFIG.LIST_ITEM_GUTTER
     })
     .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
     .backgroundColor(Color.White)

@@ -28,19 +28,21 @@ export class ToDo {
   isCompleted: boolean = false;
   focusCount: number = 0;
   focusDurationMinutes: number = 0;
+  deadline: number = 0;
 
   /**
    * Creates a new instance of a to-do item.
    * @param {string} name - To-do item name.
    */
-  constructor(name: string, priority: number = 1) {
+  constructor(name: string, priority: number = 1, deadline: number = 0) {
     this.name = name;
     this.priority = priority;
+    this.deadline = deadline;
   }
 
   static fromStorage(key: string, name: string, createdAt: number, priority: number, isCompleted: boolean,
-    focusCount: number, focusDurationMinutes: number): ToDo {
-    let todoItem = new ToDo(name, priority);
+    focusCount: number, focusDurationMinutes: number, deadline: number = 0): ToDo {
+    let todoItem = new ToDo(name, priority, deadline);
     if (key.length > 0) {
       todoItem.key = key;
     }

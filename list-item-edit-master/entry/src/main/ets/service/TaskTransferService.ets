@@ -19,6 +19,7 @@ export interface TransferTodoData {
   isCompleted: boolean;
   focusCount: number;
   focusDurationMinutes: number;
+  deadline: number;
 }
 
 export interface TaskTransferPayload {
