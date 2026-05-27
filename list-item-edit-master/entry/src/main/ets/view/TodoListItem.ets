@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { STYLE_CONFIG, Constant } from '../common/Constants';
+import { STYLE_CONFIG, UI_COLORS, Constant } from '../common/Constants';
 import { ToDo } from '../model/ToDo';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
@@ -104,11 +104,32 @@ export struct ToDoListItem {
         top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
         bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
       })
-      .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
       .backgroundColor(backgroundColor)
-      .height(30)
+      .height(32)
       .enabled(true)
       .onClick(action)
+  }
+
+  @Builder
+  infoTag(label: string, value: string, color: ResourceColor, backgroundColor: ResourceColor) {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(color)
+      Text(value)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(color)
+        .maxLines(1)
+    }
+    .padding({
+      left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+      right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+      top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+      bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+    })
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+    .backgroundColor(backgroundColor)
   }
 
   build() {
@@ -129,10 +150,9 @@ export struct ToDoListItem {
           .justifyContent(FlexAlign.Center)
           .aspectRatio(1)
           .borderRadius(STYLE_CONFIG.CUSTOM_CHECKBOX_SIZE)
-          .backgroundColor(this.toDoItem.isCompleted ? $r('sys.color.ohos_id_color_floating_button_bg_normal') :
-            Color.Transparent)
+          .backgroundColor(this.toDoItem.isCompleted ? UI_COLORS.MINT : Color.Transparent)
           .borderWidth(1)
-          .borderColor($r('sys.color.ohos_id_color_focused_content_tertiary'))
+          .borderColor(this.toDoItem.isCompleted ? UI_COLORS.MINT : UI_COLORS.TEXT_WEAK)
           .onClick(() => {
             this.addAchieveData();
           })
@@ -140,7 +160,8 @@ export struct ToDoListItem {
           Text(`${this.toDoItem.name}`)
             .maxLines(1)
             .fontSize($r('sys.float.ohos_id_text_size_headline9'))
-            .fontColor(this.toDoItem.isCompleted ? '#8A8A8A' : '#182431')
+            .fontColor(this.toDoItem.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.TEXT_PRIMARY)
+            .fontWeight(FontWeight.Medium)
             .layoutWeight(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .decoration({ type: this.toDoItem.isCompleted ? TextDecorationType.LineThrough : TextDecorationType.None })
@@ -179,22 +200,18 @@ export struct ToDoListItem {
       .height(28)
 
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        Text(`\u4E13\u6CE8 ${this.toDoItem.focusCount}\u6B21 / ${this.toDoItem.focusDurationMinutes}\u5206\u949F`)
-          .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          .layoutWeight(1)
-        Text(this.getDeadlineText())
-          .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor(this.getDeadlineColor())
-          .maxLines(1)
+        this.infoTag('\uD83C\uDF45', `${this.toDoItem.focusCount}\u6B21`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
+        this.infoTag('\u23F1', `${this.toDoItem.focusDurationMinutes}\u5206\u949F`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
+        Blank()
+        this.infoTag('\uD83D\uDCC5', this.getDeadlineText(), this.getDeadlineColor(), '#F7F8FA')
       }
       .width(Constant.PERCENT_FULL)
-      .height(22)
+      .height(30)
 
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
         if (!this.isEdited) {
-          this.actionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210', Color.White,
-            this.toDoItem.isCompleted ? '#8A8A8A' : $r('sys.color.ohos_id_color_floating_button_bg_normal'), () => {
+          this.actionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88' : '\u2713 \u5B8C\u6210', Color.White,
+            this.toDoItem.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.MINT, () => {
               this.addAchieveData();
             })
           Scroll() {
@@ -202,13 +219,13 @@ export struct ToDoListItem {
               this.actionButton('\u4E13\u6CE8', Color.White, '#0A59F7', () => {
                 this.startFocus(this.toDoItem);
               })
-              this.actionButton('\u6295\u9001', '#182431', '#F1F3F5', () => {
+              this.actionButton('\u6295\u9001', UI_COLORS.TEXT_PRIMARY, '#F1F3F5', () => {
                 this.deliverTodo(this.toDoItem);
               })
-              this.actionButton('\u8BE6\u60C5', '#182431', '#F7F8FA', () => {
+              this.actionButton('\u8BE6\u60C5', UI_COLORS.TEXT_PRIMARY, '#F7F8FA', () => {
                 this.showTodoDetail(this.toDoItem);
               })
-              this.actionButton('\u7F16\u8F91', '#182431', '#F7F8FA', () => {
+              this.actionButton('\u7F16\u8F91', UI_COLORS.TEXT_PRIMARY, '#F7F8FA', () => {
                 this.isEdited = true;
               })
             }
@@ -240,12 +257,18 @@ export struct ToDoListItem {
     .width(Constant.PERCENT_FULL)
     .constraintSize({ minHeight: 132 })
     .padding({
-      left: $r('sys.float.ohos_id_default_padding_start'),
-      right: $r('sys.float.ohos_id_default_padding_end'),
+      left: STYLE_CONFIG.UI_CARD_PADDING,
+      right: STYLE_CONFIG.UI_CARD_PADDING,
       top: STYLE_CONFIG.LIST_ITEM_GUTTER,
       bottom: STYLE_CONFIG.LIST_ITEM_GUTTER
     })
-    .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-    .backgroundColor(Color.White)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(this.toDoItem.isCompleted ? '#FAFAFA' : Color.White)
+    .shadow({
+      radius: this.toDoItem.isCompleted ? 4 : 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: this.toDoItem.isCompleted ? 1 : 4
+    })
   }
 }
