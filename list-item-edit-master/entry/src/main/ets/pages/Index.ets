@@ -16,6 +16,16 @@
 import { ToDo } from '../model/ToDo';
 import { ToDoListItem } from '../view/TodoListItem';
 import { STYLE_CONFIG, UI_COLORS, Constant } from '../common/Constants';
+import { STYLE_COLORS } from '../common/StyleConstants';
+import {
+  CommonCard,
+  CommonCardNoShadow,
+  CommonPill,
+  CommonProgressBar,
+  CommonMetricCard,
+  CommonInfoCard,
+  CommonTwoColCard
+} from '../common/CommonComponents';
 import { preferences } from '@kit.ArkData';
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -39,7 +49,7 @@ interface StoredToDo {
 }
 
 interface StoredAppState {
-  toDoData?: StoredToDo[];
+  toDoData?: (StoredToDo | null)[];
   score?: number;
   petExp?: number;
   themeIndex?: number;
@@ -235,7 +245,13 @@ struct ToDoList {
   applyStoredAppState(storedState: StoredAppState) {
     let storedTodos = storedState.toDoData;
     if (Array.isArray(storedTodos)) {
-      this.toDoData = storedTodos.map((item: StoredToDo) => this.restoreTodo(item));
+      let restoredTodos: ToDo[] = [];
+      storedTodos.forEach((item: StoredToDo | null) => {
+        if (item !== null) {
+          restoredTodos.push(this.restoreTodo(item));
+        }
+      });
+      this.toDoData = restoredTodos;
     }
     this.score = this.getStoredNumber(storedState.score, this.score);
     let storedThemeIndex = this.getStoredNumber(storedState.themeIndex, this.themeIndex);
@@ -1018,9 +1034,9 @@ struct ToDoList {
 
   getOutfitActionText(index: number): string {
     if (this.ownedOutfits[index]) {
-      return this.equippedOutfitIndex === index ? '\u88C5\u5907\u4E2D' : '\u70B9\u51FB\u88C5\u5907';
+      return this.equippedOutfitIndex === index ? '使用中' : '点击装备';
     }
-    return this.score >= this.outfitPrices[index] ? '\u53EF\u8D2D\u4E70' : '\u79EF\u5206\u4E0D\u8DB3';
+    return this.score >= this.outfitPrices[index] ? '可购买' : '积分不足';
   }
 
   getDailyGoalProgress(index: number): number {
@@ -1145,15 +1161,28 @@ struct ToDoList {
     this.showTodoNamePicker(1);
   }
 
+  getAvailableThings(): string[] {
+    try {
+      let availableThings = this.getUIContext().getHostContext()?.resourceManager
+        .getStringArrayValueSync($r('app.strarray.available_things').id);
+      if (availableThings !== undefined && availableThings.length > 0) {
+        return availableThings;
+      }
+    } catch (error) {
+      let err = error as BusinessError;
+      hilog.error(0x0000, 'Index', `load available things failed. error code=${err.code}, message=${err.message}`);
+    }
+    return ['Task'];
+  }
+
   showTodoNamePicker(priority: number) {
+    let availableThings = this.getAvailableThings();
     this.getUIContext().showTextPickerDialog({
-      range: this.getUIContext().getHostContext()?.resourceManager.getStringArrayValueSync($r('app.strarray.available_things').id),
+      range: availableThings,
       onAccept: (value: TextPickerResult) => {
-        let availableThings = this.getUIContext().getHostContext()?.resourceManager
-          .getStringArrayValueSync($r('app.strarray.available_things').id);
-        if (availableThings) {
-          this.showDeadlinePickerForNewTodo(availableThings[Number(value.index)], priority);
-        }
+        let selectedIndex = Number(value.index);
+        let safeIndex = selectedIndex >= 0 && selectedIndex < availableThings.length ? selectedIndex : 0;
+        this.showDeadlinePickerForNewTodo(availableThings[safeIndex], priority);
       },
     });
   }
@@ -1950,6 +1979,9 @@ struct ToDoList {
    * Delete a to-do/completed item.
    */
   deleteTodoItem(item: ToDo) {
+    if (item.key === this.focusTaskKey) {
+      this.cancelFocus();
+    }
     this.toDoData = this.toDoData.filter(todoItem => item.key !== todoItem.key);
     this.showToastMessage('\u5DF2\u5220\u9664');
     this.saveAppState();
@@ -4275,122 +4307,97 @@ struct ToDoList {
 
   @Builder
   petPage() {
-    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      this.studyBuddySpaceHero()
-      this.studyBuddyStatusPanel()
-      this.studyBuddyTodayRecord()
-      this.studyBuddyRecentFocus()
+    Scroll() {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.studyBuddySpaceHero()
+        this.studyBuddyTodayCard()
+        this.studyBuddyGrowthCard()
+        this.studyBuddyActionsCard()
+        this.outfitStore()
+      }
+      .width(Constant.PERCENT_FULL)
+      .padding({ bottom: STYLE_CONFIG.UI_PAGE_BOTTOM_SPACE })
     }
-    .width(Constant.PERCENT_FULL)
+    .layoutWeight(1)
+    .edgeEffect(EdgeEffect.Spring)
   }
 
   @Builder
   studyBuddySpaceHero() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\u966A\u4F34\u7A7A\u95F4')
-        .fontSize($r('sys.float.ohos_id_text_size_headline7'))
-        .fontColor(UI_COLORS.TEXT_PRIMARY)
-        .fontWeight(FontWeight.Bold)
-        .width(Constant.PERCENT_FULL)
-      Text(this.getStudyBuddyHealingQuote())
-        .fontSize($r('sys.float.ohos_id_text_size_body1'))
-        .fontColor(UI_COLORS.TEXT_SECONDARY)
-        .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         Text(this.getPetEmoji())
-          .fontSize(72)
-        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          Text(this.getStudyBuddyName())
-            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-            .fontColor(this.getThemeColor())
-            .fontWeight(FontWeight.Bold)
-            .width(Constant.PERCENT_FULL)
-          Text(`${this.getStudyBuddyIdentity()} · ${this.getStudyBuddyCompanionState()}`)
+          .fontSize(80)
+          .textAlign(TextAlign.Center)
+          .width(Constant.PERCENT_FULL)
+        Text(this.getStudyBuddyName())
+          .fontSize($r('sys.float.ohos_id_text_size_headline7'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+          .width(Constant.PERCENT_FULL)
+        Row({ space: 8 }) {
+          CommonPill({ pillLabel: 'Lv.' + this.getPetLevel(), pillTextColor: Color.White, pillBgColor: UI_COLORS.PET_PURPLE })
+          CommonPill({ pillLabel: this.getStudyBuddyMood(), pillTextColor: UI_COLORS.TEXT_PRIMARY, pillBgColor: Color.White })
+        }
+        .justifyContent(FlexAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        if (this.equippedOutfitIndex >= 0 && this.ownedOutfits[this.equippedOutfitIndex]) {
+          Text('穿着 ' + this.getEquippedOutfitName())
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
             .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .textAlign(TextAlign.Center)
             .width(Constant.PERCENT_FULL)
         }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
       }
       .width(Constant.PERCENT_FULL)
+      .padding({ top: STYLE_CONFIG.UI_CARD_PADDING * 2, bottom: STYLE_CONFIG.UI_CARD_PADDING, left: STYLE_CONFIG.UI_CARD_PADDING, right: STYLE_CONFIG.UI_CARD_PADDING })
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+      .backgroundColor(UI_COLORS.MINT_LIGHT)
     }
-    .width(Constant.PERCENT_FULL)
-    .padding(STYLE_CONFIG.UI_CARD_PADDING)
-    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(UI_COLORS.MINT_LIGHT)
-    .shadow({
-      radius: 12,
-      color: UI_COLORS.CARD_SHADOW,
-      offsetX: 0,
-      offsetY: 5
-    })
   }
 
   @Builder
-  studyBuddyStatusPanel() {
+  studyBuddyTodayCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\u5F53\u524D\u72B6\u6001')
+      Text('今日陪伴')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.currentOutfitInfo('\u5FC3\u60C5', this.getStudyBuddyMood(), UI_COLORS.MINT)
-        this.currentOutfitInfo('\u7B49\u7EA7', `Lv.${this.getPetLevel()}`, UI_COLORS.PET_PURPLE)
+        this.currentOutfitInfo('专注', this.todayFocusMinutes + '分', UI_COLORS.FOCUS_BLUE)
+        this.currentOutfitInfo('任务', this.todayCompletedCount + '', UI_COLORS.MINT)
       }
       .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.currentOutfitInfo('\u966A\u4F34\u72B6\u6001', this.getStudyBuddyCompanionState(), UI_COLORS.FOCUS_BLUE)
-        this.currentOutfitInfo('\u4ECA\u65E5\u6D3B\u8DC3', this.getStudyBuddyActivityText(), UI_COLORS.ORANGE)
-      }
-      .width(Constant.PERCENT_FULL)
-    }
-    .width(Constant.PERCENT_FULL)
-    .padding(STYLE_CONFIG.UI_CARD_PADDING)
-    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(Color.White)
-  }
-
-  @Builder
-  studyBuddyTodayRecord() {
-    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\u4ECA\u65E5\u966A\u4F34\u8BB0\u5F55')
-        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-        .fontColor(UI_COLORS.TEXT_PRIMARY)
-        .fontWeight(FontWeight.Bold)
-        .width(Constant.PERCENT_FULL)
-      Text(`\u5DF2\u966A\u4F60\u4E13\u6CE8 ${this.todayFocusMinutes}\u5206\u949F\uFF0C\u5B8C\u6210 ${this.todayCompletedCount}\u4E2A\u4EFB\u52A1`)
-        .fontSize($r('sys.float.ohos_id_text_size_body1'))
-        .fontColor(UI_COLORS.TEXT_SECONDARY)
-        .width(Constant.PERCENT_FULL)
+      CommonPill({ pillLabel: this.getStudyBuddyCompanionState(), pillTextColor: UI_COLORS.MINT, pillBgColor: UI_COLORS.MINT_LIGHT })
       Text(this.getStudyBuddyMessage())
-        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(UI_COLORS.CREAM_WHITE)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 10, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 4 })
   }
 
   @Builder
-  studyBuddyRecentFocus() {
-    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\u6700\u8FD1\u4E13\u6CE8')
+  studyBuddyGrowthCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('成长进度')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
-      Text(this.focusTaskKey.length > 0 ? `${this.getFocusTaskName()} · ${this.formatFocusTime()}` :
-        `\u4ECA\u65E5\u756A\u8304 ${this.todayPomodoroCount}\u4E2A`)
-        .fontSize($r('sys.float.ohos_id_text_size_body1'))
-        .fontColor(this.getThemeColor())
-        .fontWeight(FontWeight.Medium)
-        .width(Constant.PERCENT_FULL)
-      Text(this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0 ? '\u521A\u624D\u6CA1\u575A\u6301\u5B8C\u4E5F\u6CA1\u5173\u7CFB\uFF0C\u91CD\u65B0\u5F00\u59CB\u5C31\u597D\u3002' :
-        '\u5B8C\u6210\u6574\u6BB5\u4E13\u6CE8\u540E\uFF0C\u5B66\u4E60\u642D\u5B50\u4F1A\u4E00\u8D77\u6210\u957F\u3002')
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.currentOutfitInfo('当前等级', 'Lv.' + this.getPetLevel(), UI_COLORS.PET_PURPLE)
+        this.currentOutfitInfo('经验值', this.petExp + '', UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+      CommonProgressBar({ progressPercent: this.getPetProgress(), progressBarColor: UI_COLORS.PET_PURPLE, progressTrackColor: UI_COLORS.PINK_LIGHT })
+      Text(this.getPetExpToNextLevel() === 0 ? '已达到当前最高等级' : '距离下一级还差 ' + this.getPetExpToNextLevel() + ' 经验')
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -4399,6 +4406,31 @@ struct ToDoList {
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
     .backgroundColor(Color.White)
+    .shadow({ radius: 10, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 4 })
+  }
+
+  @Builder
+  studyBuddyActionsCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('互动')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        CommonPill({ pillLabel: '💬 换一句', pillTextColor: Color.White, pillBgColor: UI_COLORS.MINT })
+          .onClick(() => { this.showToastMessage(this.getStudyBuddyHealingQuote()); })
+        CommonPill({ pillLabel: '🎀 查看装扮', pillTextColor: Color.White, pillBgColor: UI_COLORS.PET_PURPLE })
+          .onClick(() => { this.currentTab = 7; })
+      }
+      .width(Constant.PERCENT_FULL)
+      .justifyContent(FlexAlign.Center)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 10, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 4 })
   }
 
   @Builder
