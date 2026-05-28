@@ -48,12 +48,12 @@ export struct ToDoListItem {
 
   getPriorityColor(): string {
     if (this.toDoItem.priority >= 2) {
-      return '#D94838';
+      return '#C96B62';
     }
     if (this.toDoItem.priority === 1) {
-      return '#F57C00';
+      return UI_COLORS.ORANGE;
     }
-    return '#1E8E3E';
+    return UI_COLORS.MINT;
   }
 
   getStartOfDay(timestamp: number): number {
@@ -108,6 +108,33 @@ export struct ToDoListItem {
       .backgroundColor(backgroundColor)
       .height(32)
       .enabled(true)
+      .onClick(action)
+  }
+
+  @Builder
+  primaryActionButton(label: string, textColor: ResourceColor, backgroundColor: ResourceColor, action: () => void) {
+    Button(label)
+      .type(ButtonType.Normal)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(textColor)
+      .fontWeight(FontWeight.Medium)
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor(backgroundColor)
+      .height(36)
+      .layoutWeight(1)
+      .onClick(action)
+  }
+
+  @Builder
+  secondaryActionButton(label: string, action: () => void) {
+    Button(label)
+      .type(ButtonType.Normal)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(UI_COLORS.TEXT_SECONDARY)
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor('#F4F5F2')
+      .height(30)
+      .layoutWeight(1)
       .onClick(action)
   }
 
@@ -177,7 +204,7 @@ export struct ToDoListItem {
               top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
               bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
             })
-            .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
+            .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
             .backgroundColor(this.getPriorityColor())
         } else {
           TextInput({ text: `${this.toDoItem.name}` })
@@ -210,34 +237,33 @@ export struct ToDoListItem {
 
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
         if (!this.isEdited) {
-          this.actionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88' : '\u2713 \u5B8C\u6210', Color.White,
+          this.primaryActionButton(this.toDoItem.isCompleted ? '\u53D6\u6D88' : '\u2713 \u5B8C\u6210', Color.White,
             this.toDoItem.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.MINT, () => {
               this.addAchieveData();
             })
-          Scroll() {
-            Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-              this.actionButton('\u4E13\u6CE8', Color.White, '#0A59F7', () => {
-                this.startFocus(this.toDoItem);
-              })
-              this.actionButton('\u6295\u9001', UI_COLORS.TEXT_PRIMARY, '#F1F3F5', () => {
-                this.deliverTodo(this.toDoItem);
-              })
-              this.actionButton('\u8BE6\u60C5', UI_COLORS.TEXT_PRIMARY, '#F7F8FA', () => {
-                this.showTodoDetail(this.toDoItem);
-              })
-              this.actionButton('\u7F16\u8F91', UI_COLORS.TEXT_PRIMARY, '#F7F8FA', () => {
-                this.isEdited = true;
-              })
-            }
-            .height(34)
-          }
-          .layoutWeight(1)
-          .scrollable(ScrollDirection.Horizontal)
-          .scrollBar(BarState.Off)
+          this.primaryActionButton('\u5F00\u59CB\u4E13\u6CE8', Color.White, UI_COLORS.FOCUS_BLUE, () => {
+            this.startFocus(this.toDoItem);
+          })
         }
       }
       .width(Constant.PERCENT_FULL)
-      .height(34)
+      .height(36)
+
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        if (!this.isEdited) {
+          this.secondaryActionButton('\u8BE6\u60C5', () => {
+            this.showTodoDetail(this.toDoItem);
+          })
+          this.secondaryActionButton('\u7F16\u8F91', () => {
+            this.isEdited = true;
+          })
+          this.secondaryActionButton('\u6295\u9001', () => {
+            this.deliverTodo(this.toDoItem);
+          })
+        }
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(30)
 
       if (this.isEdited) {
         Row() {
@@ -255,7 +281,7 @@ export struct ToDoListItem {
       }
     }
     .width(Constant.PERCENT_FULL)
-    .constraintSize({ minHeight: 132 })
+    .constraintSize({ minHeight: 162 })
     .padding({
       left: STYLE_CONFIG.UI_CARD_PADDING,
       right: STYLE_CONFIG.UI_CARD_PADDING,
@@ -263,12 +289,17 @@ export struct ToDoListItem {
       bottom: STYLE_CONFIG.LIST_ITEM_GUTTER
     })
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(this.toDoItem.isCompleted ? '#FAFAFA' : Color.White)
+    .backgroundColor(this.toDoItem.isCompleted ? '#F4F5F2' : UI_COLORS.CARD_WHITE)
+    .border({
+      width: 1,
+      color: this.toDoItem.isCompleted ? '#E3E6E1' : '#EEF1EC'
+    })
+    .opacity(this.toDoItem.isCompleted ? 0.72 : 1)
     .shadow({
-      radius: this.toDoItem.isCompleted ? 4 : 10,
+      radius: this.toDoItem.isCompleted ? 3 : 14,
       color: UI_COLORS.CARD_SHADOW,
       offsetX: 0,
-      offsetY: this.toDoItem.isCompleted ? 1 : 4
+      offsetY: this.toDoItem.isCompleted ? 1 : 5
     })
   }
 }

@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2024 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -125,8 +125,11 @@ struct ToDoList {
   @State focusRemainingSeconds: number = 0;
   @State focusTotalSeconds: number = 0;
   @State isFocusRunning: boolean = false;
+  @State isFocusFinished: boolean = false;
   @State selectedFocusMinutes: number = 25;
   @State isFocusImmersiveMode: boolean = false;
+  @State isFocusRoomVisible: boolean = false;
+  @State todayEarlyExitCount: number = 0;
   @State focusThemeIndex: number = 0;
 
   private focusTimer: number = -1;
@@ -137,14 +140,15 @@ struct ToDoList {
   private todayPomodoroDate: string = '';
   private dailyGoalDate: string = '';
   private dailyGoalStreakDate: string = '';
-  private themeNames: string[] = ['\u84DD\u8272', '\u7EFF\u8272', '\u7D2B\u8272', '\u6A59\u8272',
-    '\u6A31\u82B1\u7C89', '\u661F\u7A7A\u9ED1'];
-  private themeColors: string[] = ['#0A59F7', '#1E8E3E', '#7E3FF2', '#F57C00', '#E85D9E', '#222831'];
-  private themeLightColors: string[] = ['#EAF1FF', '#EAF7EE', '#F1EAFF', '#FFF3E0', '#FFF0F6', '#ECEFF3'];
+  private themeNames: string[] = ['\u68EE\u7EFF', '\u9759\u6D77', '\u591C\u7D2B', '\u6696\u91D1',
+    '\u67D4\u7C89', '\u661F\u591C'];
+  private themeColors: string[] = ['#28513F', '#304E63', '#51476F', '#A96F2D', '#A66B80', '#222831'];
+  private themeLightColors: string[] = ['#ECF8F0', '#EEF4F8', '#F1EEF8', '#FFF7EA', '#F8EEF3', '#ECEFF3'];
   private themePrices: number[] = [0, 0, 50, 80, 120, 200];
   private deliveryDevices: string[] = ['\u624B\u673A', '\u5E73\u677F', '\u667A\u6167\u5C4F', '\u7535\u8111'];
   private sortNames: string[] = ['\u521B\u5EFA\u65F6\u95F4', '\u540D\u79F0', '\u5B8C\u6210\u72B6\u6001', '\u4F18\u5148\u7EA7'];
   private tabNames: string[] = ['\u9996\u9875', '\u4EFB\u52A1', '\u65E5\u5386', '\u4E13\u6CE8', '\u7EDF\u8BA1', '\u5BA0\u7269', '\u8DE8\u8BBE\u5907', '\u6211\u7684'];
+  private visibleTabIndexes: number[] = [0, 1, 2, 4, 5, 7];
   private priorityNames: string[] = ['\u4F4E', '\u4E2D', '\u9AD8'];
   private deadlineNames: string[] = ['\u65E0\u622A\u6B62\u65E5\u671F', '\u4ECA\u5929', '\u660E\u5929', '3\u5929\u540E', '\u4E00\u5468\u540E'];
   private deadlineOffsets: number[] = [-1, 0, 1, 3, 7];
@@ -152,7 +156,7 @@ struct ToDoList {
   private focusMinuteValues: number[] = [5, 15, 25];
   private focusRoomNames: string[] = ['\u591C\u665A\u81EA\u4E60\u5BA4', '\u7D2B\u7C89\u665A\u971E', '\u6DF1\u6D77\u4E66\u623F',
     '\u96E8\u591C\u7070\u84DD', '\u65E5\u843D\u7A97\u8FB9', '\u6E05\u6668\u8584\u8377'];
-  private focusRoomColors: string[] = ['#181A3F', '#35204F', '#102C4A', '#253344', '#4B2744', '#DFF8EF'];
+  private focusRoomColors: string[] = ['#101D18', '#241B32', '#102C3A', '#202A32', '#332232', '#14241D'];
   private focusRoomLightColors: string[] = ['#224D7CFE', '#28FFB7C5', '#2440C4FF', '#306B7C93', '#30FF9F43',
     '#5536C98B'];
   private focusRoomAccentColors: string[] = ['#FFB86B', '#FFB7C5', '#7DD3FC', '#C9D4F7', '#FFC46B', '#36C98B'];
@@ -509,6 +513,13 @@ struct ToDoList {
     return `${currentDate.getFullYear()}-${monthText}-${dateText}`;
   }
 
+  getTodayDisplayText(): string {
+    let currentDate = new Date();
+    let weekNames: string[] = ['\u5468\u65E5', '\u5468\u4E00', '\u5468\u4E8C', '\u5468\u4E09',
+      '\u5468\u56DB', '\u5468\u4E94', '\u5468\u516D'];
+    return `${currentDate.getMonth() + 1}\u6708${currentDate.getDate()}\u65E5 ${weekNames[currentDate.getDay()]}`;
+  }
+
   getYesterdayString(): string {
     let currentDate = new Date();
     currentDate.setDate(currentDate.getDate() - 1);
@@ -592,6 +603,9 @@ struct ToDoList {
   }
 
   getAllTodos(): ToDo[] {
+    if (!Array.isArray(this.toDoData)) {
+      return [];
+    }
     return [...this.toDoData];
   }
 
@@ -649,6 +663,20 @@ struct ToDoList {
       return '\u4ECA\u65E5\u76EE\u6807\u8FD8\u6709\u7A7A\u95F4\uFF0C\u5B8C\u6210\u4E00\u9879\u5C31\u80FD\u63A8\u52A8\u5BA0\u7269\u6210\u957F\u3002';
     }
     return '\u8282\u594F\u4E0D\u9519\uFF0C\u4FDD\u6301\u8FD9\u4E2A\u5B66\u4E60\u624B\u611F\u3002';
+  }
+
+  getHomeCurrentGoalText(): string {
+    let activeGoalIndexes = this.getActiveDailyGoalIndexes();
+    if (activeGoalIndexes.length === 0) {
+      return '\u4FDD\u6301\u81EA\u5DF1\u7684\u8282\u594F';
+    }
+    for (let index = 0; index < activeGoalIndexes.length; index++) {
+      let goalIndex = activeGoalIndexes[index];
+      if (goalIndex >= 0 && goalIndex < this.dailyGoalNames.length && !this.isDailyGoalAchieved(goalIndex)) {
+        return `${this.dailyGoalNames[goalIndex]} ${this.getDailyGoalProgress(goalIndex)} / ${this.dailyGoalTargets[goalIndex]}`;
+      }
+    }
+    return '\u4ECA\u65E5\u76EE\u6807\u5DF2\u8FBE\u6210';
   }
 
   getTodayQuote(): string {
@@ -750,10 +778,16 @@ struct ToDoList {
   }
 
   getThemeColor(): string {
+    if (this.themeIndex < 0 || this.themeIndex >= this.themeColors.length) {
+      return UI_COLORS.FOCUS_BLUE;
+    }
     return this.themeColors[this.themeIndex];
   }
 
   getThemeLightColor(): string {
+    if (this.themeIndex < 0 || this.themeIndex >= this.themeLightColors.length) {
+      return UI_COLORS.BLUE_LIGHT;
+    }
     return this.themeLightColors[this.themeIndex];
   }
 
@@ -1151,6 +1185,10 @@ struct ToDoList {
   }
 
   showFocusPicker(item: ToDo) {
+    if (item === undefined || item.key.length === 0) {
+      this.showToastMessage('\u4EFB\u52A1\u72B6\u6001\u5F02\u5E38\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9');
+      return;
+    }
     if (item.isCompleted) {
       this.showToastMessage('\u5DF2\u5B8C\u6210\u4EFB\u52A1\u4E0D\u9700\u8981\u5F00\u59CB\u4E13\u6CE8');
       return;
@@ -1165,13 +1203,20 @@ struct ToDoList {
   }
 
   startFocus(item: ToDo, minutes: number) {
+    if (item === undefined || item.isCompleted || item.key.length === 0) {
+      this.showToastMessage('\u8BF7\u9009\u62E9\u4E00\u4E2A\u672A\u5B8C\u6210\u4EFB\u52A1');
+      return;
+    }
+    let safeMinutes = Math.max(1, Math.round(minutes));
     this.clearFocusTimer();
-    this.selectedFocusMinutes = minutes;
+    this.selectedFocusMinutes = safeMinutes;
     this.focusTaskKey = item.key;
-    this.focusTotalSeconds = minutes * 60;
+    this.focusTotalSeconds = safeMinutes * 60;
     this.focusRemainingSeconds = this.focusTotalSeconds;
     this.isFocusRunning = true;
+    this.isFocusFinished = false;
     this.isFocusImmersiveMode = true;
+    this.isFocusRoomVisible = true;
     this.currentTab = 3;
     this.startFocusTimer();
     this.showToastMessage('\u756A\u8304\u4E13\u6CE8\u5DF2\u5F00\u59CB');
@@ -1184,7 +1229,11 @@ struct ToDoList {
         return;
       }
       if (this.focusRemainingSeconds <= 1) {
-        this.completeFocus();
+        this.focusRemainingSeconds = 0;
+        this.isFocusRunning = false;
+        this.isFocusFinished = true;
+        this.clearFocusTimer();
+        this.showToastMessage('\u756A\u8304\u8BA1\u65F6\u5B8C\u6210\uFF0C\u8BF7\u70B9\u51FB\u5B8C\u6210\u4E13\u6CE8');
         return;
       }
       this.focusRemainingSeconds -= 1;
@@ -1202,21 +1251,36 @@ struct ToDoList {
     if (this.focusTaskKey.length === 0) {
       return;
     }
+    if (this.isFocusFinished) {
+      this.showToastMessage('\u672C\u8F6E\u8BA1\u65F6\u5DF2\u5B8C\u6210');
+      return;
+    }
     this.isFocusRunning = !this.isFocusRunning;
     this.showToastMessage(this.isFocusRunning ? '\u4E13\u6CE8\u5DF2\u7EE7\u7EED' : '\u4E13\u6CE8\u5DF2\u6682\u505C');
   }
 
   cancelFocus() {
+    let isEarlyExit = this.focusTaskKey.length > 0 && this.focusRemainingSeconds > 0;
     this.clearFocusTimer();
+    if (isEarlyExit) {
+      this.todayEarlyExitCount += 1;
+    }
     this.focusTaskKey = '';
     this.focusRemainingSeconds = 0;
     this.focusTotalSeconds = 0;
     this.isFocusRunning = false;
+    this.isFocusFinished = false;
     this.isFocusImmersiveMode = false;
+    this.isFocusRoomVisible = false;
+    this.currentTab = 1;
     this.showToastMessage('\u5DF2\u53D6\u6D88\u672C\u8F6E\u4E13\u6CE8');
   }
 
   completeFocus() {
+    if (!this.isFocusFinished && this.focusRemainingSeconds > 0) {
+      this.showToastMessage('\u8BA1\u65F6\u7ED3\u675F\u540E\u624D\u80FD\u5B8C\u6210\u7ED3\u7B97');
+      return;
+    }
     let focusMinutes = Math.round(this.focusTotalSeconds / 60);
     let hasFocusTask = false;
     let isReadingFocus = false;
@@ -1246,12 +1310,21 @@ struct ToDoList {
     this.focusRemainingSeconds = 0;
     this.focusTotalSeconds = 0;
     this.isFocusRunning = false;
+    this.isFocusFinished = false;
     this.isFocusImmersiveMode = false;
+    this.isFocusRoomVisible = false;
+    this.currentTab = 1;
     this.showToastMessage(hasFocusTask ? '\u4E13\u6CE8\u5B8C\u6210\uFF0C\u79EF\u5206 +15' : '\u4E13\u6CE8\u5DF2\u7ED3\u675F');
     if (hasFocusTask) {
       this.grantAchievedDailyGoals();
       this.saveAppState();
     }
+  }
+
+  exitFocusRoom() {
+    this.isFocusRoomVisible = false;
+    this.isFocusImmersiveMode = false;
+    this.currentTab = 1;
   }
 
   getFocusTaskName(): string {
@@ -1282,6 +1355,9 @@ struct ToDoList {
     if (this.focusTaskKey.length === 0) {
       return '\u51C6\u5907\u5F00\u59CB\u4E13\u6CE8';
     }
+    if (this.isFocusFinished || this.focusRemainingSeconds === 0) {
+      return '\u8BA1\u65F6\u5DF2\u5B8C\u6210';
+    }
     if (this.getFocusProgress() >= 90) {
       return '\u5373\u5C06\u5B8C\u6210';
     }
@@ -1289,6 +1365,7 @@ struct ToDoList {
   }
 
   getFocusRoomBackgroundColor(): string {
+    let safeIndex = Math.max(0, this.focusThemeIndex) % this.focusRoomColors.length;
     if (this.focusTaskKey.length === 0) {
       return this.focusRoomColors[5];
     }
@@ -1298,10 +1375,11 @@ struct ToDoList {
     if (this.getFocusProgress() >= 90) {
       return this.focusRoomColors[4];
     }
-    return this.focusRoomColors[this.focusThemeIndex % this.focusRoomColors.length];
+    return this.focusRoomColors[safeIndex];
   }
 
   getFocusRoomLightColor(): string {
+    let safeIndex = Math.max(0, this.focusThemeIndex) % this.focusRoomLightColors.length;
     if (this.focusTaskKey.length === 0) {
       return this.focusRoomLightColors[5];
     }
@@ -1311,10 +1389,11 @@ struct ToDoList {
     if (this.getFocusProgress() >= 90) {
       return this.focusRoomLightColors[4];
     }
-    return this.focusRoomLightColors[this.focusThemeIndex % this.focusRoomLightColors.length];
+    return this.focusRoomLightColors[safeIndex];
   }
 
   getFocusRoomAccentColor(): string {
+    let safeIndex = Math.max(0, this.focusThemeIndex) % this.focusRoomAccentColors.length;
     if (this.focusTaskKey.length === 0) {
       return this.focusRoomAccentColors[5];
     }
@@ -1324,7 +1403,7 @@ struct ToDoList {
     if (this.getFocusProgress() >= 90) {
       return this.focusRoomAccentColors[4];
     }
-    return this.focusRoomAccentColors[this.focusThemeIndex % this.focusRoomAccentColors.length];
+    return this.focusRoomAccentColors[safeIndex];
   }
 
   getStudyBuddyName(): string {
@@ -1357,6 +1436,9 @@ struct ToDoList {
   }
 
   getStudyBuddyMood(): string {
+    if (this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0) {
+      return '\uD83C\uDF27 \u7B49\u4F60\u56DE\u6765';
+    }
     if (this.todayFocusMinutes >= 60 || this.todayPomodoroCount >= 3) {
       return '\uD83D\uDD25 \u4ECA\u5929\u8D85\u52AA\u529B';
     }
@@ -1370,6 +1452,9 @@ struct ToDoList {
   }
 
   getStudyBuddyMessage(): string {
+    if (this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0) {
+      return '\u521A\u624D\u505C\u4E0B\u4E5F\u6CA1\u5173\u7CFB\uFF0C\u4E0B\u4E00\u4E2A 5 \u5206\u949F\u6211\u8FD8\u966A\u4F60\u3002';
+    }
     if (this.focusTaskKey.length > 0 && this.isFocusRunning) {
       return '\u518D\u575A\u6301\u4E00\u4E2A\u756A\u8304\u5C31\u4F11\u606F\uFF0C\u6211\u4F1A\u966A\u7740\u4F60\u3002';
     }
@@ -1377,6 +1462,45 @@ struct ToDoList {
       return '\u4F11\u606F\u4E00\u4E0B\u4E5F\u662F\u8282\u594F\u7684\u4E00\u90E8\u5206\u3002';
     }
     return '\u5148\u9009\u4E00\u4E2A\u5C0F\u4EFB\u52A1\u5427\uFF0C\u6211\u4EEC\u4E00\u8D77\u5F00\u59CB\u3002';
+  }
+
+  getStudyBuddyCompanionState(): string {
+    if (this.focusTaskKey.length > 0 && this.isFocusRunning) {
+      return '\u966A\u4F60\u4E13\u6CE8\u4E2D';
+    }
+    if (this.focusTaskKey.length > 0) {
+      return '\u966A\u4F60\u4F11\u606F\u4E2D';
+    }
+    if (this.todayFocusMinutes >= 60 || this.todayPomodoroCount >= 3) {
+      return '\u4ECA\u5929\u8D85\u52AA\u529B';
+    }
+    if (this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0) {
+      return '\u7B49\u4F60\u56DE\u6765';
+    }
+    if (this.todayCompletedCount > 0 || this.todayFocusMinutes > 0) {
+      return '\u72B6\u6001\u7A33\u5B9A';
+    }
+    return '\u5B89\u9759\u5F85\u673A';
+  }
+
+  getStudyBuddyActivityText(): string {
+    if (this.focusTaskKey.length > 0) {
+      return `\u5F53\u524D\u966A\u4F34 ${this.formatFocusTime()}`;
+    }
+    if (this.todayFocusMinutes > 0) {
+      return `\u4ECA\u65E5\u966A\u4F34 ${this.todayFocusMinutes} \u5206\u949F`;
+    }
+    if (this.todayEarlyExitCount > 0) {
+      return '\u4ECA\u5929\u5C1D\u8BD5\u8FC7\u4E00\u6B21\u4E13\u6CE8';
+    }
+    return '\u4ECA\u5929\u8FD8\u5728\u7B49\u7B2C\u4E00\u6BB5\u4E13\u6CE8';
+  }
+
+  getStudyBuddyHealingQuote(): string {
+    let quotes: string[] = ['\u6162\u6162\u6765\u4E5F\u5F88\u5389\u5BB3\u3002', '\u4ECA\u5929\u4E5F\u966A\u4F60\u4E00\u8D77\u8FDB\u6B65\u3002', '\u518D\u575A\u6301\u4E00\u4E2A\u756A\u8304\u5427\u3002', '\u4F60\u5DF2\u7ECF\u6BD4\u6628\u5929\u66F4\u597D\u4E86\u3002'];
+    let today = new Date();
+    let safeIndex = Math.abs(today.getDate() + this.todayPomodoroCount + this.todayCompletedCount) % quotes.length;
+    return quotes[safeIndex];
   }
 
   formatFocusTime(): string {
@@ -1391,7 +1515,18 @@ struct ToDoList {
     if (this.focusTotalSeconds === 0) {
       return 0;
     }
-    return Math.round((this.focusTotalSeconds - this.focusRemainingSeconds) * 100 / this.focusTotalSeconds);
+    let progress = Math.round((this.focusTotalSeconds - this.focusRemainingSeconds) * 100 / this.focusTotalSeconds);
+    if (progress < 0) {
+      return 0;
+    }
+    if (progress > 100) {
+      return 100;
+    }
+    return progress;
+  }
+
+  isFocusRoomActive(): boolean {
+    return this.currentTab === 3 && (this.isFocusRoomVisible || this.focusTaskKey.length > 0);
   }
 
   toggleTaskCompleteByKey(itemKey: string) {
@@ -2125,7 +2260,7 @@ struct ToDoList {
             .fontColor(UI_COLORS.TEXT_PRIMARY)
             .fontWeight(FontWeight.Medium)
             .maxLines(1)
-          Text(`${this.getDailyGoalProgress(index)} / ${this.dailyGoalTargets[index]} · +${this.dailyGoalRewards[index]}\u79EF\u5206`)
+          Text(`${this.getDailyGoalProgress(index)} / ${this.dailyGoalTargets[index]} 路 +${this.dailyGoalRewards[index]}\u79EF\u5206`)
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
             .fontColor(UI_COLORS.TEXT_SECONDARY)
             .maxLines(1)
@@ -2220,7 +2355,7 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       this.progressCard(`${this.getDailyGoalProgress(index)} / ${this.dailyGoalTargets[index]}`,
-        this.getDailyGoalPercent(index), `${this.dailyGoalTypeNames[this.normalizeGoalType(this.dailyGoalTypes[index])]} · ${this.isDailyGoalAchieved(index) ? '\u5DF2\u8FBE\u6210' : '\u672A\u8FBE\u6210'}`)
+        this.getDailyGoalPercent(index), `${this.dailyGoalTypeNames[this.normalizeGoalType(this.dailyGoalTypes[index])]} 路 ${this.isDailyGoalAchieved(index) ? '\u5DF2\u8FBE\u6210' : '\u672A\u8FBE\u6210'}`)
     }
     .width(Constant.PERCENT_FULL)
   }
@@ -2600,6 +2735,8 @@ struct ToDoList {
           .backgroundColor(UI_COLORS.BLUE_LIGHT)
           .onClick(() => {
             this.isFocusImmersiveMode = true;
+            this.isFocusRoomVisible = true;
+            this.currentTab = 3;
           })
         Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
           Text(this.isFocusRunning ? '\u6682\u505C' : '\u7EE7\u7EED')
@@ -2616,7 +2753,7 @@ struct ToDoList {
             .onClick(() => {
               this.pauseOrResumeFocus();
             })
-          Text('\u5B8C\u6210')
+          Text('\u63D0\u524D\u7ED3\u675F')
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
             .fontColor(Color.White)
             .padding({
@@ -2626,21 +2763,7 @@ struct ToDoList {
               bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
             })
             .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-            .backgroundColor(UI_COLORS.MINT)
-            .onClick(() => {
-              this.completeFocus();
-            })
-          Text('\u53D6\u6D88')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(UI_COLORS.TEXT_PRIMARY)
-            .padding({
-              left: STYLE_CONFIG.LIST_ITEM_GUTTER,
-              right: STYLE_CONFIG.LIST_ITEM_GUTTER,
-              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-            })
-            .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-            .backgroundColor('#F1F3F5')
+            .backgroundColor(UI_COLORS.ORANGE)
             .onClick(() => {
               this.cancelFocus();
             })
@@ -2975,7 +3098,7 @@ struct ToDoList {
     }
     .width(Constant.PERCENT_FULL)
     .height(Constant.PERCENT_FULL)
-    .backgroundColor(this.getFocusRoomBackgroundColor())
+    .backgroundColor($r('app.color.background_color'))
   }
 
   @Builder
@@ -3142,28 +3265,11 @@ struct ToDoList {
   homePage() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.welcomeCard()
-      this.studyAtmosphereCard()
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('📝', '\u4ECA\u65E5\u4EFB\u52A1', `${this.getTotalCount()}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
-        this.overviewMetricCard('✅', '\u5B8C\u6210 / \u5B8C\u6210\u7387', `${this.todayCompletedCount} / ${this.getCompletionRate()}%`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
+      this.todayFocusOverviewCard()
+      if (this.focusTaskKey.length > 0) {
+        this.continueFocusCard()
       }
-      .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('🍅', '\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE, UI_COLORS.PINK_LIGHT)
-        this.overviewMetricCard('⏱', '\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
-      }
-      .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('⭐', '\u5F53\u524D\u79EF\u5206', `${this.score}`, UI_COLORS.PET_PURPLE, UI_COLORS.PINK_LIGHT)
-        this.overviewMetricCard('🌱', '\u5BA0\u7269\u6210\u957F', `Lv.${this.getPetLevel()}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
-      }
-      .width(Constant.PERCENT_FULL)
-      this.todayAdviceCard()
-      this.checkInCard()
-      this.dailyGoalCard()
       this.petMiniCard()
-      this.focusMiniCard()
-      this.countdownCard()
     }
     .width(Constant.PERCENT_FULL)
   }
@@ -3173,12 +3279,16 @@ struct ToDoList {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          Text('\u4ECA\u5929\u4E5F\u8981\u597D\u597D\u5B66\u4E60\u5440')
+          Text(this.getTodayDisplayText())
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .width(Constant.PERCENT_FULL)
+          Text('\u4ECA\u5929\u4E5F\u7EE7\u7EED\u52AA\u529B\u5427')
             .fontSize($r('sys.float.ohos_id_text_size_headline7'))
             .fontColor(UI_COLORS.TEXT_PRIMARY)
             .fontWeight(FontWeight.Bold)
             .width(Constant.PERCENT_FULL)
-          Text('\u5C0F\u4F19\u4F34\u966A\u4F60\u5B8C\u6210\u4ECA\u65E5\u76EE\u6807')
+          Text(`\u8FDE\u7EED\u4E13\u6CE8 ${this.dailyGoalStreak}\u5929`)
             .fontSize($r('sys.float.ohos_id_text_size_body1'))
             .fontColor(UI_COLORS.TEXT_SECONDARY)
             .width(Constant.PERCENT_FULL)
@@ -3189,16 +3299,6 @@ struct ToDoList {
           .fontSize(48)
       }
       .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        this.bannerPill(`⭐ ${this.score}\u79EF\u5206`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
-        this.bannerPill(`🌱 Lv.${this.getPetLevel()}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
-        this.bannerPill(`🔥 ${this.dailyGoalStreak}\u5929`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
-      }
-      .width(Constant.PERCENT_FULL)
-      Text(`\u5F85\u529E ${this.getUncompletedCount()} \u4EF6\uFF0C\u76EE\u6807\u8FBE\u6210\u7387 ${this.getDailyGoalCompletionRate()}%`)
-        .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(UI_COLORS.TEXT_SECONDARY)
-        .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
@@ -3209,6 +3309,94 @@ struct ToDoList {
       color: UI_COLORS.CARD_SHADOW,
       offsetX: 0,
       offsetY: 5
+    })
+  }
+
+  @Builder
+  todayFocusOverviewCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text('\u4ECA\u65E5\u72B6\u6001')
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(UI_COLORS.TEXT_PRIMARY)
+            .fontWeight(FontWeight.Bold)
+            .width(Constant.PERCENT_FULL)
+          Text(this.getStudyBuddyHealingQuote())
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .maxLines(2)
+            .width(Constant.PERCENT_FULL)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.currentOutfitInfo('\u4E13\u6CE8\u5206\u949F', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE)
+        this.currentOutfitInfo('\u5B8C\u6210\u4EFB\u52A1', `${this.todayCompletedCount}`, UI_COLORS.MINT)
+        this.currentOutfitInfo('\u5F53\u524D\u76EE\u6807', this.getHomeCurrentGoalText(), UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Text(this.getTodayQuote())
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+    .shadow({
+      radius: 12,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 5
+    })
+  }
+
+  @Builder
+  continueFocusCard() {
+    Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u7EE7\u7EED\u4E13\u6CE8')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Bold)
+          .width(Constant.PERCENT_FULL)
+        Text(`${this.getFocusTaskName()} · ${this.formatFocusTime()}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor('#DDE7FF')
+          .maxLines(1)
+          .width(Constant.PERCENT_FULL)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      Text('\u8FDB\u5165')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.FOCUS_BLUE)
+        .padding({
+          left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(Color.White)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(UI_COLORS.FOCUS_BLUE)
+    .shadow({
+      radius: 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 4
+    })
+    .onClick(() => {
+      this.isFocusRoomVisible = true;
+      this.currentTab = 3;
     })
   }
 
@@ -3342,7 +3530,18 @@ struct ToDoList {
 
   @Builder
   focusPage() {
-    this.immersiveFocusClockPage()
+    if (this.isFocusRoomVisible || this.focusTaskKey.length > 0) {
+      this.immersiveFocusClockPage()
+    } else {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.focusHeroCard()
+        this.focusModeSelector()
+        this.focusTodayDataCard()
+        this.focusEncourageCard()
+        this.quickFocusTasks()
+      }
+      .width(Constant.PERCENT_FULL)
+    }
   }
 
   @Builder
@@ -3389,60 +3588,25 @@ struct ToDoList {
       .backgroundColor(this.getFocusRoomBackgroundColor())
 
       Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        Row() {
-          Text(this.getFocusStateText())
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor('#EAF0FF')
-            .padding({
-              left: STYLE_CONFIG.LIST_ITEM_GUTTER,
-              right: STYLE_CONFIG.LIST_ITEM_GUTTER,
-              top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-              bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-            })
-            .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-            .backgroundColor('#26FFFFFF')
-          Blank()
-          Text('\u9996\u9875')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(Color.White)
-            .textAlign(TextAlign.Center)
-            .width(56)
-            .height(44)
-            .borderRadius(22)
-            .backgroundColor('#26FFFFFF')
-            .onClick(() => {
-              this.currentTab = 0;
-            })
-          Text('\u4EFB\u52A1')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(Color.White)
-            .textAlign(TextAlign.Center)
-            .width(56)
-            .height(44)
-            .borderRadius(22)
-            .backgroundColor('#26FFFFFF')
-            .onClick(() => {
-              this.currentTab = 1;
-            })
-        }
-        .width(Constant.PERCENT_FULL)
-
-        Text(this.getTodayQuote())
-          .fontSize($r('sys.float.ohos_id_text_size_body1'))
-          .fontColor('#DDE7FF')
-          .textAlign(TextAlign.Center)
-          .width(Constant.PERCENT_FULL)
-          .padding({
-            left: STYLE_CONFIG.UI_CARD_PADDING,
-            right: STYLE_CONFIG.UI_CARD_PADDING
-          })
-
         Blank()
 
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text('\u5F53\u524D\u4EFB\u52A1')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor('#C9D4F7')
+          Text(this.focusTaskKey.length > 0 ? this.getFocusTaskName() : '\u8BF7\u4ECE\u4EFB\u52A1\u9875\u9009\u62E9\u4E13\u6CE8\u4EFB\u52A1')
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(Color.White)
+            .fontWeight(FontWeight.Bold)
+            .textAlign(TextAlign.Center)
+            .maxLines(2)
+        }
+        .width(Constant.PERCENT_FULL)
+        .padding(STYLE_CONFIG.UI_CARD_PADDING)
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+        .backgroundColor('#22FFFFFF')
+
         Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-          Text('\u2726  \uD83C\uDF19  \u2726')
-            .fontSize(28)
-            .fontColor('#FFF2C4')
           Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
             Text(this.focusTaskKey.length > 0 ? this.formatFocusTime() : `${this.selectedFocusMinutes}:00`)
               .fontSize(78)
@@ -3483,32 +3647,48 @@ struct ToDoList {
         }
         .width(Constant.PERCENT_FULL)
 
-        this.focusRoomStatusCard()
-        this.focusRoomStudyDesk()
-        this.focusRoomBuddyCard()
-
-        Blank()
+        Text(this.getTodayQuote())
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor('#DDE7FF')
+          .textAlign(TextAlign.Center)
+          .width(Constant.PERCENT_FULL)
+          .padding({
+            left: STYLE_CONFIG.UI_CARD_PADDING,
+            right: STYLE_CONFIG.UI_CARD_PADDING
+          })
 
         if (this.focusTaskKey.length === 0) {
-          this.focusRoomStartPanel()
+          Text('\u8FD4\u56DE\u4EFB\u52A1\u9875\u9009\u62E9\u4E00\u4E2A\u4EFB\u52A1\u5F00\u59CB\u4E13\u6CE8')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(Color.White)
+            .textAlign(TextAlign.Center)
+            .width(Constant.PERCENT_FULL)
+            .height(48)
+            .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+            .backgroundColor('#28FFFFFF')
+            .onClick(() => {
+              this.exitFocusRoom();
+            })
         } else {
-          Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-            this.focusRoomAction(this.isFocusRunning ? '\u23F8' : '\u25B6', () => {
-              this.pauseOrResumeFocus();
-            })
-            this.focusRoomAction('\u2713', () => {
-              this.completeFocus();
-            })
-            this.focusRoomAction('\u00D7', () => {
-              this.cancelFocus();
-            })
-            this.focusRoomAction('\u2190', () => {
-              this.currentTab = 0;
-            })
+          Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+            if (this.isFocusFinished || this.focusRemainingSeconds === 0) {
+              this.focusRoomPrimaryAction('\u5B8C\u6210\u4E13\u6CE8', this.getFocusRoomAccentColor(), () => {
+                this.completeFocus();
+              })
+            } else {
+              this.focusRoomPrimaryAction(this.isFocusRunning ? '\u6682\u505C\u4E13\u6CE8' : '\u7EE7\u7EED\u4E13\u6CE8',
+                '#32FFFFFF', () => {
+                this.pauseOrResumeFocus();
+              })
+              this.focusRoomPrimaryAction('\u63D0\u524D\u7ED3\u675F', UI_COLORS.ORANGE, () => {
+                this.cancelFocus();
+              })
+            }
           }
           .width(Constant.PERCENT_FULL)
-          .justifyContent(FlexAlign.Center)
         }
+
+        Blank()
       }
       .width(Constant.PERCENT_FULL)
       .height(Constant.PERCENT_FULL)
@@ -3521,7 +3701,22 @@ struct ToDoList {
     }
     .width(Constant.PERCENT_FULL)
     .height(Constant.PERCENT_FULL)
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .backgroundColor(this.getFocusRoomBackgroundColor())
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  @Builder
+  focusRoomPrimaryAction(labelText: string, backgroundColor: ResourceColor, action: () => void) {
+    Text(labelText)
+      .fontSize($r('sys.float.ohos_id_text_size_body1'))
+      .fontColor(Color.White)
+      .fontWeight(FontWeight.Medium)
+      .textAlign(TextAlign.Center)
+      .width(Constant.PERCENT_FULL)
+      .height(52)
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor(backgroundColor)
+      .onClick(action)
   }
 
   @Builder
@@ -3843,13 +4038,13 @@ struct ToDoList {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.sectionTitle('\u4ECA\u65E5\u4E13\u6CE8\u6570\u636E')
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('🍅', '\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
-        this.overviewMetricCard('⏱', '\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
+        this.overviewMetricCard('\u756A', '\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
+        this.overviewMetricCard('\u65F6', '\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
       }
       .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('📚', '\u672C\u4EFB\u52A1\u6B21\u6570', `${this.getCurrentFocusCount()}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
-        this.overviewMetricCard('🌿', '\u672C\u4EFB\u52A1\u5206\u949F', `${this.getCurrentFocusMinutes()}`, UI_COLORS.PET_PURPLE, UI_COLORS.PINK_LIGHT)
+        this.overviewMetricCard('\u6B21', '\u672C\u4EFB\u52A1\u6B21\u6570', `${this.getCurrentFocusCount()}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
+        this.overviewMetricCard('\u5206', '\u672C\u4EFB\u52A1\u5206\u949F', `${this.getCurrentFocusMinutes()}`, UI_COLORS.PET_PURPLE, UI_COLORS.PINK_LIGHT)
       }
       .width(Constant.PERCENT_FULL)
     }
@@ -3859,7 +4054,7 @@ struct ToDoList {
   @Builder
   focusEncourageCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('🌤 \u5148\u4E13\u6CE8 5 \u5206\u949F\uFF0C\u72B6\u6001\u4F1A\u6162\u6162\u56DE\u6765\u3002')
+      Text('\u5148\u4E13\u6CE8 5 \u5206\u949F\uFF0C\u72B6\u6001\u4F1A\u6162\u6162\u56DE\u6765\u3002')
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .width(Constant.PERCENT_FULL)
@@ -3902,7 +4097,7 @@ struct ToDoList {
       }
       ForEach(this.getAllTodos().filter((item: ToDo) => !item.isCompleted).slice(0, 4), (item: ToDo) => {
         Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          Text('📌')
+          Text('\u7B7E')
             .fontSize(18)
           Text(item.name)
             .fontSize($r('sys.float.ohos_id_text_size_body1'))
@@ -4081,14 +4276,129 @@ struct ToDoList {
   @Builder
   petPage() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      this.petDressBanner()
-      this.petCard()
-      this.currentOutfitCard()
-      this.outfitStore()
-      this.achievementBadgeCard()
-      this.themeStore()
+      this.studyBuddySpaceHero()
+      this.studyBuddyStatusPanel()
+      this.studyBuddyTodayRecord()
+      this.studyBuddyRecentFocus()
     }
     .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  studyBuddySpaceHero() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u966A\u4F34\u7A7A\u95F4')
+        .fontSize($r('sys.float.ohos_id_text_size_headline7'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Text(this.getStudyBuddyHealingQuote())
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Text(this.getPetEmoji())
+          .fontSize(72)
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text(this.getStudyBuddyName())
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(this.getThemeColor())
+            .fontWeight(FontWeight.Bold)
+            .width(Constant.PERCENT_FULL)
+          Text(`${this.getStudyBuddyIdentity()} · ${this.getStudyBuddyCompanionState()}`)
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .width(Constant.PERCENT_FULL)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(UI_COLORS.MINT_LIGHT)
+    .shadow({
+      radius: 12,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 5
+    })
+  }
+
+  @Builder
+  studyBuddyStatusPanel() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u5F53\u524D\u72B6\u6001')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.currentOutfitInfo('\u5FC3\u60C5', this.getStudyBuddyMood(), UI_COLORS.MINT)
+        this.currentOutfitInfo('\u7B49\u7EA7', `Lv.${this.getPetLevel()}`, UI_COLORS.PET_PURPLE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.currentOutfitInfo('\u966A\u4F34\u72B6\u6001', this.getStudyBuddyCompanionState(), UI_COLORS.FOCUS_BLUE)
+        this.currentOutfitInfo('\u4ECA\u65E5\u6D3B\u8DC3', this.getStudyBuddyActivityText(), UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  studyBuddyTodayRecord() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text('\u4ECA\u65E5\u966A\u4F34\u8BB0\u5F55')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Text(`\u5DF2\u966A\u4F60\u4E13\u6CE8 ${this.todayFocusMinutes}\u5206\u949F\uFF0C\u5B8C\u6210 ${this.todayCompletedCount}\u4E2A\u4EFB\u52A1`)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Text(this.getStudyBuddyMessage())
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(UI_COLORS.CREAM_WHITE)
+  }
+
+  @Builder
+  studyBuddyRecentFocus() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text('\u6700\u8FD1\u4E13\u6CE8')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Text(this.focusTaskKey.length > 0 ? `${this.getFocusTaskName()} · ${this.formatFocusTime()}` :
+        `\u4ECA\u65E5\u756A\u8304 ${this.todayPomodoroCount}\u4E2A`)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(this.getThemeColor())
+        .fontWeight(FontWeight.Medium)
+        .width(Constant.PERCENT_FULL)
+      Text(this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0 ? '\u521A\u624D\u6CA1\u575A\u6301\u5B8C\u4E5F\u6CA1\u5173\u7CFB\uFF0C\u91CD\u65B0\u5F00\u59CB\u5C31\u597D\u3002' :
+        '\u5B8C\u6210\u6574\u6BB5\u4E13\u6CE8\u540E\uFF0C\u5B66\u4E60\u642D\u5B50\u4F1A\u4E00\u8D77\u6210\u957F\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
   }
 
   @Builder
@@ -4239,7 +4549,6 @@ struct ToDoList {
       this.profileInfoCard()
       this.themeStore()
       this.dataManagementCard()
-      this.featureHighlightsCard()
     }
     .width(Constant.PERCENT_FULL)
   }
@@ -4327,7 +4636,7 @@ struct ToDoList {
   @Builder
   petMiniCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('🌱 \u5BA0\u7269\u9F13\u52B1')
+      Text('\u5B66\u4E60\u642D\u5B50')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -4336,10 +4645,10 @@ struct ToDoList {
         Text(this.getPetEmoji())
           .fontSize(40)
         Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          Text(`Lv.${this.getPetLevel()} ${this.getPetName()}`)
+          Text(`${this.getStudyBuddyName()} · Lv.${this.getPetLevel()}`)
             .fontSize($r('sys.float.ohos_id_text_size_headline8'))
             .fontColor(this.getThemeColor())
-          Text(`\u6210\u957F\u503C ${this.petExp} / \u8DDD\u4E0B\u4E00\u7EA7 ${this.getPetExpToNextLevel()}`)
+          Text(this.getStudyBuddyMood())
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
             .fontColor($r('sys.color.ohos_id_color_text_secondary'))
         }
@@ -4357,7 +4666,7 @@ struct ToDoList {
       .height(8)
       .borderRadius(4)
       .backgroundColor(Color.White)
-      Text(this.getPetStatusText())
+      Text(this.getStudyBuddyMessage())
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -4371,6 +4680,9 @@ struct ToDoList {
       color: UI_COLORS.CARD_SHADOW,
       offsetX: 0,
       offsetY: 4
+    })
+    .onClick(() => {
+      this.currentTab = 5;
     })
   }
 
@@ -4454,7 +4766,7 @@ struct ToDoList {
   @Builder
   countdownCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('⏳ \u6700\u8FD1\u622A\u6B62')
+      Text('\u6700\u8FD1\u622A\u6B62')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -4526,7 +4838,7 @@ struct ToDoList {
           .fontColor(item.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.TEXT_PRIMARY)
           .fontWeight(FontWeight.Medium)
           .maxLines(1)
-        Text(`${this.getPriorityName(item.priority)} · ${this.getDeadlineDateText(item.deadline)}`)
+        Text(`${this.getPriorityName(item.priority)} 路 ${this.getDeadlineDateText(item.deadline)}`)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(UI_COLORS.TEXT_SECONDARY)
       }
@@ -4709,35 +5021,6 @@ struct ToDoList {
   }
 
   @Builder
-  featureHighlightsCard() {
-    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\u2728 \u9879\u76EE\u4EAE\u70B9')
-        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-        .fontColor(UI_COLORS.TEXT_PRIMARY)
-        .fontWeight(FontWeight.Bold)
-        .width(Constant.PERCENT_FULL)
-      Flex({ wrap: FlexWrap.Wrap }) {
-        this.badgeItem('\uD83D\uDCDD', '\u4EFB\u52A1\u7BA1\u7406', true)
-        this.badgeItem('\uD83C\uDF45', '\u756A\u8304\u4E13\u6CE8', true)
-        this.badgeItem('\uD83C\uDFAF', '\u81EA\u5F8B\u76EE\u6807', true)
-        this.badgeItem('\uD83D\uDC3E', '\u5BA0\u7269\u6210\u957F', true)
-        this.badgeItem('\uD83C\uDF80', '\u88C5\u626E\u5546\u57CE', true)
-        this.badgeItem('\uD83D\uDCCA', '\u7EDF\u8BA1\u5206\u6790', true)
-        this.badgeItem('\uD83D\uDCC5', '\u65E5\u5386\u5012\u8BA1', true)
-        this.badgeItem('\uD83D\uDCF1', '\u771F\u5B9E\u6295\u9001', true)
-      }
-      Text(`\u5DF2\u89E3\u9501\u6210\u5C31 ${this.getAchievementCount()} / 7`)
-        .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(UI_COLORS.ORANGE)
-        .width(Constant.PERCENT_FULL)
-    }
-    .width(Constant.PERCENT_FULL)
-    .padding(STYLE_CONFIG.UI_CARD_PADDING)
-    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(Color.White)
-  }
-
-  @Builder
   pageTitle(title: string) {
     Text(title)
       .fontSize($r('sys.float.ohos_id_text_size_headline7'))
@@ -4768,14 +5051,15 @@ struct ToDoList {
 
   build() {
     Column() {
-      if (this.currentTab === 3) {
+      if (this.isFocusRoomActive()) {
         Column() {
           this.immersiveFocusClockPage()
         }
         .width(Constant.PERCENT_FULL)
         .height(Constant.PERCENT_FULL)
         .layoutWeight(1)
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+        .backgroundColor(this.getFocusRoomBackgroundColor())
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       } else {
         Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
           Text($r('app.string.todo'))
@@ -4833,9 +5117,10 @@ struct ToDoList {
         }
       }
     }
-    .backgroundColor(this.currentTab === 3 ? this.getFocusRoomBackgroundColor() : $r('app.color.background_color'))
+    .backgroundColor(this.isFocusRoomActive() ? this.getFocusRoomBackgroundColor() : $r('app.color.background_color'))
     .height(Constant.PERCENT_FULL)
     .width(Constant.PERCENT_FULL)
+    .expandSafeArea([SafeAreaType.SYSTEM], this.isFocusRoomActive() ? [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM] : [SafeAreaEdge.BOTTOM])
     .onAreaChange((oldValue: Area, newValue: Area) => {
       this.isWideScreen = Number(newValue.width) >= 720;
     })
@@ -4844,9 +5129,9 @@ struct ToDoList {
   @Builder
   sideNavigation() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      ForEach(this.tabNames, (tabName: string, index: number) => {
-        this.navButton(tabName, index, true)
-      }, (tabName: string) => tabName)
+      ForEach(this.visibleTabIndexes, (tabIndex: number) => {
+        this.navButton(this.tabNames[tabIndex], tabIndex, true)
+      }, (tabIndex: number) => `${tabIndex}`)
     }
     .width(132)
     .height(Constant.PERCENT_FULL)
@@ -4857,11 +5142,11 @@ struct ToDoList {
 
   @Builder
   bottomNavigation() {
-    if (this.currentTab !== 3) {
+    if (!this.isFocusRoomActive()) {
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        ForEach(this.tabNames, (tabName: string, index: number) => {
-          this.navButton(tabName, index, false)
-        }, (tabName: string) => tabName)
+        ForEach(this.visibleTabIndexes, (tabIndex: number) => {
+          this.navButton(this.tabNames[tabIndex], tabIndex, false)
+        }, (tabIndex: number) => `${tabIndex}`)
       }
       .width(Constant.PERCENT_FULL)
       .padding({
@@ -4875,12 +5160,16 @@ struct ToDoList {
         bottom: STYLE_CONFIG.ICON_GUTTER
       })
       .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-      .backgroundColor(UI_COLORS.CARD_WHITE)
+      .backgroundColor('#EFFFFFFF')
+      .border({
+        width: 1,
+        color: '#66FFFFFF'
+      })
       .shadow({
-        radius: 16,
-        color: '#24000000',
+        radius: 22,
+        color: '#18000000',
         offsetX: 0,
-        offsetY: 6
+        offsetY: 8
       })
     }
   }
@@ -4930,9 +5219,9 @@ struct ToDoList {
           bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
         })
         .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-        .backgroundColor(this.currentTab === index ? this.getThemeColor() : '#F6F7FB')
+        .backgroundColor(this.currentTab === index ? this.getThemeColor() : '#00FFFFFF')
         .opacity(this.currentTab === index ? 1 : 0.82)
-        .height(44)
+        .height(this.currentTab === index ? 46 : 40)
         .width(this.currentTab === index ? 86 : 34)
         .onClick(() => {
           this.currentTab = index;
