@@ -29,20 +29,45 @@ export class ToDo {
   focusCount: number = 0;
   focusDurationMinutes: number = 0;
   deadline: number = 0;
+  taskType: string = 'focus';
+  plannedFocusMinutes: number = 25;
+  cardThemeIndex: number = -1;
+  category: string = '\u9ED8\u8BA4';
+  repeatType: string = '\u4E0D\u91CD\u590D';
 
   /**
    * Creates a new instance of a to-do item.
    * @param {string} name - To-do item name.
    */
-  constructor(name: string, priority: number = 1, deadline: number = 0) {
+  constructor(name: string, priority: number = 1, deadline: number = 0, category: string = '\u9ED8\u8BA4',
+    repeatType: string = '\u4E0D\u91CD\u590D', taskType: string = 'focus', plannedFocusMinutes: number = 25,
+    cardThemeIndex: number = -1) {
     this.name = name;
     this.priority = priority;
     this.deadline = deadline;
+    this.category = category.length > 0 ? category : name;
+    this.repeatType = repeatType.length > 0 ? repeatType : '\u4E0D\u91CD\u590D';
+    this.taskType = ToDo.normalizeTaskType(taskType);
+    this.plannedFocusMinutes = Math.max(1, Math.round(plannedFocusMinutes));
+    this.cardThemeIndex = cardThemeIndex;
+  }
+
+  static normalizeTaskType(taskType: string): string {
+    if (taskType === 'once' || taskType === 'todo') {
+      return 'once';
+    }
+    if (taskType === 'habit') {
+      return 'habit';
+    }
+    return 'focus';
   }
 
   static fromStorage(key: string, name: string, createdAt: number, priority: number, isCompleted: boolean,
-    focusCount: number, focusDurationMinutes: number, deadline: number = 0): ToDo {
-    let todoItem = new ToDo(name, priority, deadline);
+    focusCount: number, focusDurationMinutes: number, deadline: number = 0, category: string = '\u9ED8\u8BA4',
+    repeatType: string = '\u4E0D\u91CD\u590D', taskType: string = 'focus', plannedFocusMinutes: number = 25,
+    cardThemeIndex: number = -1): ToDo {
+    let todoItem = new ToDo(name, priority, deadline, category, repeatType, taskType, plannedFocusMinutes,
+      cardThemeIndex);
     if (key.length > 0) {
       todoItem.key = key;
     }

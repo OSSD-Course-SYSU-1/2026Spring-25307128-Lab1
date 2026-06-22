@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2024 Huawei Device Co., Ltd.
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
 
 import { ToDo } from '../model/ToDo';
 import { ToDoListItem } from '../view/TodoListItem';
+import { TodoCard } from '../view/TodoCard';
+import { AddOrEditTodoForm } from './EditTodoPage';
 import { STYLE_CONFIG, UI_COLORS, Constant } from '../common/Constants';
 import { STYLE_COLORS } from '../common/StyleConstants';
 import {
@@ -31,9 +33,13 @@ import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
+  FocusTransferPayload,
+  FreeFlowPayload,
+  TransferFocusData,
   TaskTransferPayload,
   TaskTransferService,
   TransferDevice,
+  TransferResult,
   TransferTodoData
 } from '../service/TaskTransferService';
 
@@ -46,6 +52,11 @@ interface StoredToDo {
   focusCount?: number;
   focusDurationMinutes?: number;
   deadline?: number;
+  taskType?: string;
+  plannedFocusMinutes?: number;
+  cardThemeIndex?: number;
+  category?: string;
+  repeatType?: string;
 }
 
 interface StoredAppState {
@@ -72,6 +83,7 @@ interface StoredAppState {
   dailyGoalStreakDate?: string;
   ownedOutfits?: boolean[];
   equippedOutfitIndex?: number;
+  selectedStudyRoomIndex?: number;
   lastDeliveryRecord?: string;
   realDeliveryStatus?: string;
   lastRealSentTask?: string;
@@ -79,6 +91,13 @@ interface StoredAppState {
   lastDeliveryType?: string;
   discoveredDeviceCount?: number;
   receivedTransferIds?: string[];
+  focusThemeIndex?: number;
+  focusClockStyleIndex?: number;
+}
+
+interface FocusTaskShare {
+  name: string;
+  minutes: number;
 }
 
 const APP_STATE_PREFERENCES_NAME: string = 'todo_app_state_preferences';
@@ -98,6 +117,8 @@ struct ToDoList {
   @State toDoData: ToDo[] = [];
   @State score: number = 0;
   @State petExp: number = 0;
+  @State selectedStudyRoomIndex: number = 0;
+  @State studyBuddyReply: string = '';
   @State themeIndex: number = 0;
   @State hasCheckedToday: boolean = false;
   @State lastCheckInDate: string = '';
@@ -117,8 +138,8 @@ struct ToDoList {
   @State newGoalName: string = '';
   @State newGoalTargetIndex: number = 0;
   @State newGoalTypeIndex: number = 0;
-  @State ownedOutfits: boolean[] = [false, false, false, false, false, false];
-  @State equippedOutfitIndex: number = -1;
+  @State ownedOutfits: boolean[] = [true, false, false, false, false];
+  @State equippedOutfitIndex: number = 0;
   @State unlockedThemes: boolean[] = [true, true, false, false, false, false];
   @State lastDeliveryRecord: string = '\u6682\u65E0\u6295\u9001\u8BB0\u5F55';
   @State realDeliveryStatus: string = '\u771F\u5B9E\u6295\u9001\u672A\u5F00\u59CB';
@@ -131,6 +152,12 @@ struct ToDoList {
   @State sortIndex: number = 0;
   @State currentTab: number = 0;
   @State isWideScreen: boolean = false;
+  @State calendarMonthOffset: number = 0;
+  @State selectedCalendarDate: number = 0;
+  @State editingTodoKey: string = '';
+  @State actionMenuTodoKey: string = '';
+  @State isAddingTodo: boolean = false;
+  @State addingTodoDraft: ToDo = new ToDo('');
   @State focusTaskKey: string = '';
   @State focusRemainingSeconds: number = 0;
   @State focusTotalSeconds: number = 0;
@@ -141,10 +168,34 @@ struct ToDoList {
   @State isFocusRoomVisible: boolean = false;
   @State todayEarlyExitCount: number = 0;
   @State focusThemeIndex: number = 0;
+  @State focusClockStyleIndex: number = 0;
+  @State currentFocusQuote: string = '';
+  @State isFocusThemePanelVisible: boolean = false;
+  @State isFocusNoisePanelVisible: boolean = false;
+  @State focusNoiseIndex: number = 0;
+  @State focusReturnTab: number = 0;
+  @State pendingTransferKind: string = '';
+  @State pendingTransferId: string = '';
+  @State pendingTransferSource: string = '';
+  @State pendingTaskName: string = '';
+  @State pendingTaskType: string = 'focus';
+  @State pendingTaskPriority: number = 1;
+  @State pendingTaskDeadline: number = 0;
+  @State pendingTaskCategory: string = '\u9ED8\u8BA4';
+  @State pendingTaskRepeatType: string = '\u4E0D\u91CD\u590D';
+  @State pendingTaskFocusCount: number = 0;
+  @State pendingTaskFocusMinutes: number = 0;
+  @State pendingTaskPlannedMinutes: number = 25;
+  @State pendingTaskCardThemeIndex: number = -1;
+  @State pendingFocusTaskTitle: string = '';
+  @State pendingFocusRemainingSeconds: number = 0;
+  @State pendingFocusTotalSeconds: number = 0;
+  @State pendingFocusIsPaused: boolean = false;
 
   private focusTimer: number = -1;
   private appPreferences: preferences.Preferences | null = null;
   private taskTransferService: TaskTransferService = new TaskTransferService();
+  private focusTaskPieContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
   private realDeliveryDevices: TransferDevice[] = [];
   private hasInitializedTransfer: boolean = false;
   private todayPomodoroDate: string = '';
@@ -157,27 +208,32 @@ struct ToDoList {
   private themePrices: number[] = [0, 0, 50, 80, 120, 200];
   private deliveryDevices: string[] = ['\u624B\u673A', '\u5E73\u677F', '\u667A\u6167\u5C4F', '\u7535\u8111'];
   private sortNames: string[] = ['\u521B\u5EFA\u65F6\u95F4', '\u540D\u79F0', '\u5B8C\u6210\u72B6\u6001', '\u4F18\u5148\u7EA7'];
-  private tabNames: string[] = ['\u9996\u9875', '\u4EFB\u52A1', '\u65E5\u5386', '\u4E13\u6CE8', '\u7EDF\u8BA1', '\u5BA0\u7269', '\u8DE8\u8BBE\u5907', '\u6211\u7684'];
-  private visibleTabIndexes: number[] = [0, 1, 2, 4, 5, 7];
+  private tabNames: string[] = ['\u4EE3\u529E', '\u4EFB\u52A1', '\u65E5\u5386', '\u4E13\u6CE8', '\u7EDF\u8BA1', '\u5C0Fmo\u7A7A\u95F4', '\u8DE8\u8BBE\u5907', '\u6211\u7684'];
+  private visibleTabIndexes: number[] = [0, 2, 4, 5, 7];
   private priorityNames: string[] = ['\u4F4E', '\u4E2D', '\u9AD8'];
   private deadlineNames: string[] = ['\u65E0\u622A\u6B62\u65E5\u671F', '\u4ECA\u5929', '\u660E\u5929', '3\u5929\u540E', '\u4E00\u5468\u540E'];
+  private demoTaskNames: string[] = ['\u8BFB\u4E66', '\u9AD8\u6570\u590D\u4E60', '\u80CC\u5355\u8BCD', 'HarmonyOS\u9879\u76EE'];
   private deadlineOffsets: number[] = [-1, 0, 1, 3, 7];
   private focusMinuteNames: string[] = ['5\u5206\u949F', '15\u5206\u949F', '25\u5206\u949F'];
   private focusMinuteValues: number[] = [5, 15, 25];
-  private focusRoomNames: string[] = ['\u591C\u665A\u81EA\u4E60\u5BA4', '\u7D2B\u7C89\u665A\u971E', '\u6DF1\u6D77\u4E66\u623F',
-    '\u96E8\u591C\u7070\u84DD', '\u65E5\u843D\u7A97\u8FB9', '\u6E05\u6668\u8584\u8377'];
-  private focusRoomColors: string[] = ['#101D18', '#241B32', '#102C3A', '#202A32', '#332232', '#14241D'];
-  private focusRoomLightColors: string[] = ['#224D7CFE', '#28FFB7C5', '#2440C4FF', '#306B7C93', '#30FF9F43',
-    '#5536C98B'];
-  private focusRoomAccentColors: string[] = ['#FFB86B', '#FFB7C5', '#7DD3FC', '#C9D4F7', '#FFC46B', '#36C98B'];
+  private focusRoomNames: string[] = ['\u68EE\u7EFF', '\u9759\u6D77\u84DD', '\u591C\u7D2B', '\u6696\u91D1', '\u67D4\u7C89'];
+  private focusRoomColors: string[] = ['#142B24', '#142A3A', '#241D35', '#352719', '#35222B'];
+  private focusRoomLightColors: string[] = ['#5536C98B', '#445FA8D3', '#449A86D8', '#44D9953D', '#44E89AAF'];
+  private focusRoomAccentColors: string[] = ['#78B995', '#7DD3FC', '#B8A7E8', '#FFC46B', '#F0A7BA'];
+  private focusClockStyleNames: string[] = ['\u5706\u73AF\u65F6\u949F', '\u6781\u7B80\u6570\u5B57', '\u5361\u7247\u65F6\u949F'];
+  private focusQuotes: string[] = ['\u5148\u4E13\u6CE8 5 \u5206\u949F\uFF0C\u72B6\u6001\u4F1A\u6162\u6162\u56DE\u6765\u3002',
+    '\u4ECA\u5929\u53EA\u8981\u524D\u8FDB\u4E00\u70B9\u70B9\u5C31\u5F88\u597D\u3002',
+    '\u628A\u8FD9\u4E00\u5C0F\u6BB5\u65F6\u95F4\u7559\u7ED9\u81EA\u5DF1\u3002',
+    '\u5C0Fmo\u966A\u4F60\u4E00\u8D77\u5B8C\u6210\u8FD9\u4E2A\u76EE\u6807\u3002',
+    '\u4E0D\u6025\uFF0C\u6162\u6162\u8FDB\u5165\u72B6\u6001\u3002'];
+  private focusNoiseNames: string[] = ['\u65E0\u97F3\u4E50', '\u96E8\u58F0', '\u6D77\u6D6A', '\u68EE\u6797'];
   private dailyGoalTypeNames: string[] = ['\u4EFB\u52A1\u5B8C\u6210', '\u756A\u8304\u5B8C\u6210',
     '\u4E13\u6CE8\u5206\u949F', '\u9605\u8BFB\u5206\u949F'];
   private dailyGoalTargetOptions: number[] = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
   private dailyGoalTargetNames: string[] = ['1', '2', '3', '5', '10', '15', '20', '30', '45', '60'];
-  private outfitNames: string[] = ['\uD83C\uDF92 \u5B66\u4E60\u80CC\u5305', '\uD83D\uDC51 \u81EA\u5F8B\u738B\u51A0',
-    '\uD83E\uDDE3 \u4E13\u6CE8\u56F4\u5DFE', '\uD83C\uDF1F \u661F\u5149\u80CC\u666F',
-    '\uD83D\uDCDA \u4E66\u672C\u4F19\u4F34', '\uD83C\uDFC5 \u4E13\u6CE8\u5956\u7AE0'];
-  private outfitPrices: number[] = [30, 80, 60, 100, 50, 120];
+  private outfitNames: string[] = ['\u5976\u6CB9\u56F4\u5DFE', '\u661F\u661F\u5E3D\u5B50',
+    '\u68EE\u6797\u4E66\u5305', '\u591C\u8BFB\u773C\u955C', '\u5B66\u9738\u5C0F\u5FBD\u7AE0'];
+  private outfitPrices: number[] = [0, 50, 80, 120, 160];
   private motivationalQuotes: string[] = [
     '\u5148\u5F00\u59CB 5 \u5206\u949F\u5C31\u597D\uFF0C\u72B6\u6001\u4F1A\u6162\u6162\u56DE\u6765 \uD83C\uDF31',
     '\u4ECA\u5929\u7684\u5C0F\u52AA\u529B\uFF0C\u4F1A\u53D8\u6210\u672A\u6765\u7684\u5927\u60CA\u559C \u2728',
@@ -248,7 +304,10 @@ struct ToDoList {
       let restoredTodos: ToDo[] = [];
       storedTodos.forEach((item: StoredToDo | null) => {
         if (item !== null) {
-          restoredTodos.push(this.restoreTodo(item));
+          let restoredTodo = this.restoreTodo(item);
+          if (!restoredTodo.isCompleted) {
+            restoredTodos.push(restoredTodo);
+          }
         }
       });
       this.toDoData = restoredTodos;
@@ -310,18 +369,24 @@ struct ToDoList {
     this.dailyGoalStreak = Math.max(0, this.getStoredNumber(storedState.dailyGoalStreak, this.dailyGoalStreak));
     this.dailyGoalStreakDate = this.getStoredString(storedState.dailyGoalStreakDate, this.dailyGoalStreakDate);
     let storedOutfits = storedState.ownedOutfits;
+    let updatedOutfits = [true, false, false, false, false];
     if (Array.isArray(storedOutfits)) {
-      let updatedOutfits = [false, false, false, false, false, false];
       storedOutfits.forEach((isOwned: boolean, index: number) => {
         if (index < updatedOutfits.length && typeof isOwned === 'boolean') {
-          updatedOutfits[index] = isOwned;
+          updatedOutfits[index] = index === 0 ? true : isOwned;
         }
       });
-      this.ownedOutfits = updatedOutfits;
     }
+    this.ownedOutfits = updatedOutfits;
     let storedOutfitIndex = this.getStoredNumber(storedState.equippedOutfitIndex, this.equippedOutfitIndex);
-    if (storedOutfitIndex >= -1 && storedOutfitIndex < this.outfitNames.length) {
+    if (storedOutfitIndex >= 0 && storedOutfitIndex < this.outfitNames.length && this.ownedOutfits[storedOutfitIndex]) {
       this.equippedOutfitIndex = storedOutfitIndex;
+    } else {
+      this.equippedOutfitIndex = 0;
+    }
+    let storedStudyRoomIndex = this.getStoredNumber(storedState.selectedStudyRoomIndex, this.selectedStudyRoomIndex);
+    if (storedStudyRoomIndex >= 0 && storedStudyRoomIndex < 4) {
+      this.selectedStudyRoomIndex = storedStudyRoomIndex;
     }
     this.lastDeliveryRecord = this.getStoredString(storedState.lastDeliveryRecord, this.lastDeliveryRecord);
     this.realDeliveryStatus = this.getStoredString(storedState.realDeliveryStatus, this.realDeliveryStatus);
@@ -330,6 +395,14 @@ struct ToDoList {
     this.lastDeliveryType = this.getStoredString(storedState.lastDeliveryType, this.lastDeliveryType);
     this.discoveredDeviceCount = Math.max(0, this.getStoredNumber(storedState.discoveredDeviceCount,
       this.discoveredDeviceCount));
+    let storedFocusThemeIndex = this.getStoredNumber(storedState.focusThemeIndex, this.focusThemeIndex);
+    if (storedFocusThemeIndex >= 0 && storedFocusThemeIndex < this.focusRoomNames.length) {
+      this.focusThemeIndex = storedFocusThemeIndex;
+    }
+    let storedFocusClockStyleIndex = this.getStoredNumber(storedState.focusClockStyleIndex, this.focusClockStyleIndex);
+    if (storedFocusClockStyleIndex >= 0 && storedFocusClockStyleIndex < this.focusClockStyleNames.length) {
+      this.focusClockStyleIndex = storedFocusClockStyleIndex;
+    }
     let storedTransferIds = storedState.receivedTransferIds;
     if (Array.isArray(storedTransferIds)) {
       this.receivedTransferIds = storedTransferIds.filter((transferId: string) => transferId.length > 0);
@@ -382,7 +455,12 @@ struct ToDoList {
       this.getStoredBoolean(item.isCompleted, false),
       Math.max(0, this.getStoredNumber(item.focusCount, 0)),
       Math.max(0, this.getStoredNumber(item.focusDurationMinutes, 0)),
-      Math.max(0, this.getStoredNumber(item.deadline, 0))
+      Math.max(0, this.getStoredNumber(item.deadline, 0)),
+      this.getStoredString(item.category, todoName),
+      this.getStoredString(item.repeatType, '\u4E0D\u91CD\u590D'),
+      this.getStoredString(item.taskType, 'focus'),
+      Math.max(1, this.getStoredNumber(item.plannedFocusMinutes, 25)),
+      this.getStoredNumber(item.cardThemeIndex, -1)
     );
   }
 
@@ -416,6 +494,26 @@ struct ToDoList {
       return 2;
     }
     return normalizedPriority;
+  }
+
+  getPriorityColor(priority: number): string {
+    if (priority >= 2) {
+      return STYLE_COLORS.PRIORITY_HIGH;
+    }
+    if (priority === 1) {
+      return STYLE_COLORS.PRIORITY_MIDDLE;
+    }
+    return STYLE_COLORS.PRIORITY_LOW;
+  }
+
+  getPriorityBgColor(priority: number): string {
+    if (priority >= 2) {
+      return STYLE_COLORS.PRIORITY_HIGH_BG;
+    }
+    if (priority === 1) {
+      return STYLE_COLORS.PRIORITY_MIDDLE_BG;
+    }
+    return STYLE_COLORS.PRIORITY_LOW_BG;
   }
 
   getInitialPetExp(storedPetExp: number | undefined): number {
@@ -474,7 +572,9 @@ struct ToDoList {
 
   buildStoredAppState(): StoredAppState {
     return {
-      toDoData: this.toDoData.map((item: ToDo) => this.buildStoredToDo(item)),
+      toDoData: this.toDoData
+        .filter((item: ToDo) => !item.isCompleted)
+        .map((item: ToDo) => this.buildStoredToDo(item)),
       score: this.score,
       petExp: this.petExp,
       themeIndex: this.themeIndex,
@@ -497,13 +597,16 @@ struct ToDoList {
       dailyGoalStreakDate: this.dailyGoalStreakDate,
       ownedOutfits: [...this.ownedOutfits],
       equippedOutfitIndex: this.equippedOutfitIndex,
+      selectedStudyRoomIndex: this.selectedStudyRoomIndex,
       lastDeliveryRecord: this.lastDeliveryRecord,
       realDeliveryStatus: this.realDeliveryStatus,
       lastRealSentTask: this.lastRealSentTask,
       lastRealReceivedTask: this.lastRealReceivedTask,
       lastDeliveryType: this.lastDeliveryType,
       discoveredDeviceCount: this.discoveredDeviceCount,
-      receivedTransferIds: [...this.receivedTransferIds]
+      receivedTransferIds: [...this.receivedTransferIds],
+      focusThemeIndex: this.focusThemeIndex,
+      focusClockStyleIndex: this.focusClockStyleIndex
     };
   }
 
@@ -516,7 +619,12 @@ struct ToDoList {
       isCompleted: item.isCompleted,
       focusCount: item.focusCount,
       focusDurationMinutes: item.focusDurationMinutes,
-      deadline: item.deadline
+      deadline: item.deadline,
+      taskType: item.taskType,
+      plannedFocusMinutes: item.plannedFocusMinutes,
+      cardThemeIndex: item.cardThemeIndex,
+      category: item.category,
+      repeatType: item.repeatType
     };
   }
 
@@ -571,10 +679,38 @@ struct ToDoList {
     if (diffDays === 0) {
       return '\u4ECA\u5929\u622A\u6B62';
     }
+    if (diffDays === 1) {
+      return '\u660E\u5929\u622A\u6B62';
+    }
     if (diffDays > 0) {
       return `\u8FD8\u6709 ${diffDays} \u5929`;
     }
     return `\u5DF2\u903E\u671F ${Math.abs(diffDays)} \u5929`;
+  }
+
+  getDeadlineStatusColor(deadline: number, isCompleted: boolean): string {
+    if (isCompleted) {
+      return UI_COLORS.TEXT_WEAK;
+    }
+    let diffDays = Math.round((this.getStartOfDay(deadline) - this.getTodayStart()) / (24 * 60 * 60 * 1000));
+    if (diffDays < 0) {
+      return STYLE_COLORS.PRIORITY_HIGH;
+    }
+    if (diffDays === 0) {
+      return UI_COLORS.ORANGE;
+    }
+    return UI_COLORS.FOCUS_BLUE;
+  }
+
+  getDeadlineStatusNote(deadline: number): string {
+    let deadlineText = this.getDeadlineText(deadline);
+    if (deadlineText.startsWith('\u5DF2\u903E\u671F')) {
+      return `${deadlineText}\uFF0C\u5C3D\u5FEB\u5904\u7406`;
+    }
+    if (deadlineText === '\u4ECA\u5929\u622A\u6B62') {
+      return '\u4ECA\u5929\u622A\u6B62\uFF0C\u8BB0\u5F97\u5B8C\u6210\u54E6';
+    }
+    return deadlineText;
   }
 
   getDeadlineDateText(deadline: number): string {
@@ -676,7 +812,7 @@ struct ToDoList {
       return '\u9009\u4E00\u4E2A\u4EFB\u52A1\u5F00\u542F\u4E00\u4E2A\u756A\u8304\uFF0C\u5148\u8FDB\u5165\u72B6\u6001\u3002';
     }
     if (this.getDailyGoalCompletionRate() < 50) {
-      return '\u4ECA\u65E5\u76EE\u6807\u8FD8\u6709\u7A7A\u95F4\uFF0C\u5B8C\u6210\u4E00\u9879\u5C31\u80FD\u63A8\u52A8\u5BA0\u7269\u6210\u957F\u3002';
+      return '\u4ECA\u65E5\u76EE\u6807\u8FD8\u6709\u7A7A\u95F4\uFF0C\u5B8C\u6210\u4E00\u9879\u5C31\u80FD\u63A8\u52A8\u5C0Fmo\u6210\u957F\u3002';
     }
     return '\u8282\u594F\u4E0D\u9519\uFF0C\u4FDD\u6301\u8FD9\u4E2A\u5B66\u4E60\u624B\u611F\u3002';
   }
@@ -770,27 +906,24 @@ struct ToDoList {
 
   getTabIcon(index: number): string {
     if (index === 0) {
-      return '\uD83C\uDFE0';
-    }
-    if (index === 1) {
-      return '\uD83D\uDCDD';
+      return '\u270E';
     }
     if (index === 2) {
-      return '\uD83D\uDCC5';
+      return '\u25F7';
     }
     if (index === 3) {
-      return '\uD83C\uDF45';
+      return '\u25CC';
     }
     if (index === 4) {
-      return '\uD83D\uDCCA';
+      return '\u2726';
     }
     if (index === 5) {
-      return '\uD83D\uDC31';
+      return '\u2661';
     }
     if (index === 6) {
-      return '\uD83D\uDCE1';
+      return '\u25C7';
     }
-    return '\uD83D\uDC64';
+    return '\u25E1';
   }
 
   getThemeColor(): string {
@@ -813,44 +946,32 @@ struct ToDoList {
   }
 
   getPetName(): string {
-    if (this.petExp >= 700) {
-      return '\u5B66\u4E60\u795E\u9F99';
+    if (this.getPetLevel() >= 8) {
+      return '\u5C0Fmo\u5B66\u4E60\u4F19\u4F34';
     }
-    if (this.petExp >= 400) {
-      return '\u667A\u6167\u5C0F\u72D0';
+    if (this.getPetLevel() >= 5) {
+      return '\u6210\u957F\u4E2D\u7684\u5C0Fmo';
     }
-    if (this.petExp >= 200) {
-      return '\u4E13\u6CE8\u5C0F\u718A';
+    if (this.getPetLevel() >= 3) {
+      return '\u5C0Fmo\u5E7C\u5D3D';
     }
-    if (this.petExp >= 100) {
-      return '\u52AA\u529B\u5C0F\u732B';
+    if (this.getPetLevel() >= 2 || this.todayFocusMinutes >= 30) {
+      return '\u5FEB\u7834\u58F3\u7684\u5C0Fmo';
     }
-    if (this.petExp >= 50) {
-      return '\u5B66\u4E60\u5E7C\u5D3D';
-    }
-    return '\u5B66\u4E60\u86CB';
+    return '\u7761\u5728\u86CB\u91CC\u7684\u5C0Fmo';
   }
 
   getPetEmoji(): string {
-    if (this.petExp >= 700) {
-      return '\uD83D\uDC32';
-    }
-    if (this.petExp >= 400) {
-      return '\uD83E\uDD8A';
-    }
-    if (this.petExp >= 200) {
-      return '\uD83D\uDC3B';
-    }
-    if (this.petExp >= 100) {
-      return '\uD83D\uDC31';
-    }
-    if (this.petExp >= 50) {
-      return '\uD83D\uDC23';
-    }
-    return '\uD83E\uDD5A';
+    return 'mo';
   }
 
   getPetLevel(): number {
+    if (this.petExp >= 1400) {
+      return 8;
+    }
+    if (this.petExp >= 1000) {
+      return 7;
+    }
     if (this.petExp >= 700) {
       return 6;
     }
@@ -870,6 +991,12 @@ struct ToDoList {
   }
 
   getCurrentLevelScore(): number {
+    if (this.petExp >= 1400) {
+      return 1400;
+    }
+    if (this.petExp >= 1000) {
+      return 1000;
+    }
     if (this.petExp >= 700) {
       return 700;
     }
@@ -889,8 +1016,14 @@ struct ToDoList {
   }
 
   getNextLevelScore(): number {
+    if (this.petExp >= 1400) {
+      return 1400;
+    }
+    if (this.petExp >= 1000) {
+      return 1400;
+    }
     if (this.petExp >= 700) {
-      return 700;
+      return 1000;
     }
     if (this.petExp >= 400) {
       return 700;
@@ -925,16 +1058,19 @@ struct ToDoList {
   }
 
   getPetStatusText(): string {
-    if (this.petExp >= 700) {
-      return '\u5DF2\u6210\u4E3A\u5B66\u4E60\u795E\u9F99\uFF0C\u7EE7\u7EED\u4FDD\u6301\u8282\u594F';
+    if (this.getPetLevel() >= 8) {
+      return '\u5C0Fmo\u5750\u5728\u4E66\u684C\u65C1\uFF0C\u966A\u4F60\u4E00\u8D77\u5B66\u4E60';
     }
-    if (this.getTotalFocusMinutes() >= 120) {
-      return '\u4E13\u6CE8\u4E4B\u529B\u6B63\u5728\u5E2E\u5B83\u98DE\u5FEB\u6210\u957F';
+    if (this.getPetLevel() >= 5) {
+      return '\u5C0Fmo\u6B63\u5728\u957F\u5927\uFF0C\u88C5\u9970\u4E5F\u53D8\u5F97\u66F4\u4E30\u5BCC';
     }
-    if (this.getCompletedCount() > 0) {
-      return '\u6BCF\u5B8C\u6210\u4E00\u4EF6\u5C0F\u4E8B\uFF0C\u5B83\u90FD\u4F1A\u66F4\u6709\u7CBE\u795E';
+    if (this.getPetLevel() >= 3) {
+      return '\u5C0Fmo\u8BDE\u751F\u5566\uFF0C\u6BCF\u4E2A\u4EFB\u52A1\u90FD\u5728\u5E2E\u5B83\u6210\u957F';
     }
-    return '\u4ECE\u4E00\u4E2A\u5C0F\u4EFB\u52A1\u5F00\u59CB\uFF0C\u966A\u5B83\u6162\u6162\u957F\u5927';
+    if (this.getPetLevel() >= 2 || this.todayFocusMinutes >= 30) {
+      return '\u86CB\u58F3\u51FA\u73B0\u5C0F\u88C2\u7F1D\uFF0C\u5C0Fmo\u597D\u50CF\u5FEB\u51FA\u6765\u5566';
+    }
+    return '\u5C0Fmo\u6B63\u5728\u86CB\u91CC\u7761\u89C9';
   }
 
   getTotalFocusMinutes(): number {
@@ -991,52 +1127,47 @@ struct ToDoList {
       this.ownedOutfits[this.equippedOutfitIndex]) {
       return this.outfitNames[this.equippedOutfitIndex];
     }
-    return '\u6682\u672A\u88C5\u5907';
+    return this.outfitNames[0];
   }
 
   getOutfitIcon(index: number): string {
-    if (index === 0) {
-      return '\uD83C\uDF92';
-    }
-    if (index === 1) {
-      return '\uD83D\uDC51';
-    }
-    if (index === 2) {
-      return '\uD83E\uDDE3';
-    }
-    if (index === 3) {
-      return '\uD83C\uDF1F';
-    }
-    if (index === 4) {
-      return '\uD83D\uDCDA';
-    }
-    return '\uD83C\uDFC5';
+    let icons: string[] = ['A', 'S', 'F', 'H', 'M', 'R'];
+    return icons[Math.max(0, index) % icons.length];
   }
 
   getOutfitDisplayName(index: number): string {
-    if (index === 0) {
-      return '\u5B66\u4E60\u80CC\u5305';
-    }
-    if (index === 1) {
-      return '\u81EA\u5F8B\u738B\u51A0';
-    }
-    if (index === 2) {
-      return '\u4E13\u6CE8\u56F4\u5DFE';
-    }
-    if (index === 3) {
-      return '\u661F\u5149\u80CC\u666F';
-    }
-    if (index === 4) {
-      return '\u4E66\u672C\u4F19\u4F34';
-    }
-    return '\u4E13\u6CE8\u5956\u7AE0';
+    return this.outfitNames[Math.max(0, index) % this.outfitNames.length];
+  }
+
+  getOutfitStyleTag(index: number): string {
+    let tags: string[] = ['\u56F4\u5DFE', '\u5E3D\u5B50', '\u4E66\u5305', '\u773C\u955C', '\u5FBD\u7AE0'];
+    return tags[Math.max(0, index) % tags.length];
+  }
+
+  getOutfitPreviewColor(index: number): string {
+    let colors: string[] = ['#F6E6C8', '#A9D6B2', '#B9B7E8', '#F4CBB9', '#BFD6EA'];
+    return colors[Math.max(0, index) % colors.length];
+  }
+
+  getOutfitScarfColor(index: number): string {
+    let colors: string[] = ['#E5B86E', '#7CB894', '#8D84CE', '#EAA679', '#7FA7C7'];
+    return colors[Math.max(0, index) % colors.length];
+  }
+
+  getOutfitRoomBgColor(index: number): string {
+    let colors: string[] = ['#FFF3DF', '#E9F8ED', '#F3EDFF', '#FFF7EA', '#E9F1FA'];
+    return colors[Math.max(0, index) % colors.length];
   }
 
   getOutfitActionText(index: number): string {
     if (this.ownedOutfits[index]) {
-      return this.equippedOutfitIndex === index ? '使用中' : '点击装备';
+      return this.equippedOutfitIndex === index ? '\u4F69\u6234\u4E2D' : '\u4F69\u6234';
     }
-    return this.score >= this.outfitPrices[index] ? '可购买' : '积分不足';
+    return this.score >= this.outfitPrices[index] ? '\u5151\u6362' : '\u79EF\u5206\u4E0D\u8DB3';
+  }
+
+  canRedeemOutfit(index: number): boolean {
+    return index >= 0 && index < this.outfitNames.length && !this.ownedOutfits[index] && this.score >= this.outfitPrices[index];
   }
 
   getDailyGoalProgress(index: number): number {
@@ -1158,7 +1289,9 @@ struct ToDoList {
   }
 
   showAddTodoDialog() {
-    this.showTodoNamePicker(1);
+    this.addingTodoDraft = new ToDo('', 1, 0, '\u9ED8\u8BA4', '\u4E0D\u91CD\u590D', 'focus', 25, -1);
+    this.isAddingTodo = true;
+    this.editingTodoKey = '';
   }
 
   getAvailableThings(): string[] {
@@ -1222,6 +1355,10 @@ struct ToDoList {
       this.showToastMessage('\u5DF2\u5B8C\u6210\u4EFB\u52A1\u4E0D\u9700\u8981\u5F00\u59CB\u4E13\u6CE8');
       return;
     }
+    if (item.taskType !== 'focus') {
+      this.showToastMessage('\u53EA\u6709\u4E13\u6CE8\u4EFB\u52A1\u53EF\u4EE5\u8FDB\u5165\u4E13\u6CE8\u623F');
+      return;
+    }
     this.getUIContext().showTextPickerDialog({
       range: this.focusMinuteNames,
       selected: 2,
@@ -1232,11 +1369,12 @@ struct ToDoList {
   }
 
   startFocus(item: ToDo, minutes: number) {
-    if (item === undefined || item.isCompleted || item.key.length === 0) {
+    if (item === undefined || item.isCompleted || item.key.length === 0 || item.taskType !== 'focus') {
       this.showToastMessage('\u8BF7\u9009\u62E9\u4E00\u4E2A\u672A\u5B8C\u6210\u4EFB\u52A1');
       return;
     }
     let safeMinutes = Math.max(1, Math.round(minutes));
+    this.focusReturnTab = this.getSafeFocusReturnTab(this.currentTab);
     this.clearFocusTimer();
     this.selectedFocusMinutes = safeMinutes;
     this.focusTaskKey = item.key;
@@ -1246,9 +1384,28 @@ struct ToDoList {
     this.isFocusFinished = false;
     this.isFocusImmersiveMode = true;
     this.isFocusRoomVisible = true;
+    this.isFocusThemePanelVisible = false;
+    this.isFocusNoisePanelVisible = false;
+    this.currentFocusQuote = this.getRandomFocusQuote();
     this.currentTab = 3;
     this.startFocusTimer();
     this.showToastMessage('\u756A\u8304\u4E13\u6CE8\u5DF2\u5F00\u59CB');
+  }
+
+  getSafeFocusReturnTab(tabIndex: number): number {
+    if (tabIndex === 0 || tabIndex === 2 || tabIndex === 4 || tabIndex === 5 || tabIndex === 7) {
+      return tabIndex;
+    }
+    return 0;
+  }
+
+  consumeFocusReturnTab(): number {
+    this.focusReturnTab = 0;
+    return 0;
+  }
+
+  getRandomFocusQuote(): string {
+    return this.focusQuotes[Math.floor(Math.random() * this.focusQuotes.length)];
   }
 
   startFocusTimer() {
@@ -1285,7 +1442,9 @@ struct ToDoList {
       return;
     }
     this.isFocusRunning = !this.isFocusRunning;
-    this.showToastMessage(this.isFocusRunning ? '\u4E13\u6CE8\u5DF2\u7EE7\u7EED' : '\u4E13\u6CE8\u5DF2\u6682\u505C');
+    if (!this.isFocusRoomActive()) {
+      this.showToastMessage(this.isFocusRunning ? '\u4E13\u6CE8\u5DF2\u7EE7\u7EED' : '\u4E13\u6CE8\u5DF2\u6682\u505C');
+    }
   }
 
   cancelFocus() {
@@ -1301,7 +1460,10 @@ struct ToDoList {
     this.isFocusFinished = false;
     this.isFocusImmersiveMode = false;
     this.isFocusRoomVisible = false;
-    this.currentTab = 1;
+    this.isFocusThemePanelVisible = false;
+    this.isFocusNoisePanelVisible = false;
+    this.currentFocusQuote = '';
+    this.currentTab = this.consumeFocusReturnTab();
     this.showToastMessage('\u5DF2\u53D6\u6D88\u672C\u8F6E\u4E13\u6CE8');
   }
 
@@ -1342,7 +1504,10 @@ struct ToDoList {
     this.isFocusFinished = false;
     this.isFocusImmersiveMode = false;
     this.isFocusRoomVisible = false;
-    this.currentTab = 1;
+    this.isFocusThemePanelVisible = false;
+    this.isFocusNoisePanelVisible = false;
+    this.currentFocusQuote = '';
+    this.currentTab = this.consumeFocusReturnTab();
     this.showToastMessage(hasFocusTask ? '\u4E13\u6CE8\u5B8C\u6210\uFF0C\u79EF\u5206 +15' : '\u4E13\u6CE8\u5DF2\u7ED3\u675F');
     if (hasFocusTask) {
       this.grantAchievedDailyGoals();
@@ -1353,7 +1518,9 @@ struct ToDoList {
   exitFocusRoom() {
     this.isFocusRoomVisible = false;
     this.isFocusImmersiveMode = false;
-    this.currentTab = 1;
+    this.isFocusThemePanelVisible = false;
+    this.isFocusNoisePanelVisible = false;
+    this.currentTab = this.consumeFocusReturnTab();
   }
 
   getFocusTaskName(): string {
@@ -1395,60 +1562,33 @@ struct ToDoList {
 
   getFocusRoomBackgroundColor(): string {
     let safeIndex = Math.max(0, this.focusThemeIndex) % this.focusRoomColors.length;
-    if (this.focusTaskKey.length === 0) {
-      return this.focusRoomColors[5];
-    }
-    if (!this.isFocusRunning) {
-      return this.focusRoomColors[3];
-    }
-    if (this.getFocusProgress() >= 90) {
-      return this.focusRoomColors[4];
-    }
     return this.focusRoomColors[safeIndex];
   }
 
   getFocusRoomLightColor(): string {
     let safeIndex = Math.max(0, this.focusThemeIndex) % this.focusRoomLightColors.length;
-    if (this.focusTaskKey.length === 0) {
-      return this.focusRoomLightColors[5];
-    }
-    if (!this.isFocusRunning) {
-      return this.focusRoomLightColors[3];
-    }
-    if (this.getFocusProgress() >= 90) {
-      return this.focusRoomLightColors[4];
-    }
     return this.focusRoomLightColors[safeIndex];
   }
 
   getFocusRoomAccentColor(): string {
     let safeIndex = Math.max(0, this.focusThemeIndex) % this.focusRoomAccentColors.length;
-    if (this.focusTaskKey.length === 0) {
-      return this.focusRoomAccentColors[5];
-    }
-    if (!this.isFocusRunning) {
-      return this.focusRoomAccentColors[3];
-    }
-    if (this.getFocusProgress() >= 90) {
-      return this.focusRoomAccentColors[4];
-    }
     return this.focusRoomAccentColors[safeIndex];
   }
 
   getStudyBuddyName(): string {
     if (this.petExp >= 700) {
-      return '\uD83D\uDC32 \u6DF1\u591C\u795E\u9F99';
+      return '\u95EA\u5149\u5C0Fmo';
     }
     if (this.petExp >= 400) {
-      return '\uD83E\uDD8A \u6DF1\u591C\u5B66\u59D0';
+      return '\u8FDB\u9636\u5C0Fmo';
     }
     if (this.petExp >= 200) {
-      return '\uD83D\uDC3B \u81EA\u5F8B\u718A';
+      return '\u4E13\u6CE8\u5C0Fmo';
     }
     if (this.petExp >= 100) {
-      return '\uD83D\uDC31 \u5C0F\u591C\u732B';
+      return '\u52AA\u529B\u5C0Fmo';
     }
-    return '\uD83D\uDC30 \u5B66\u4E60\u5154';
+    return '\u65B0\u624B\u5C0Fmo';
   }
 
   getStudyBuddyIdentity(): string {
@@ -1465,32 +1605,67 @@ struct ToDoList {
   }
 
   getStudyBuddyMood(): string {
+    if (this.focusTaskKey.length > 0) {
+      return '\u4E13\u6CE8';
+    }
+    if (this.todayFocusMinutes >= 60) {
+      return '\u8BA4\u771F';
+    }
+    if (this.todayPomodoroCount >= 2) {
+      return '\u5F00\u5FC3';
+    }
+    if (this.todayCompletedCount >= 3) {
+      return '\u6210\u5C31\u611F';
+    }
+    if (this.todayEarlyExitCount > 0) {
+      return '\u56F0\u5026';
+    }
+    return '\u8BA4\u771F';
+  }
+
+  getStudyBuddyTodayState(): string {
+    if (this.todayFocusMinutes >= 60) {
+      return '\u5E72\u52B2\u5341\u8DB3';
+    }
+    if (this.todayFocusMinutes >= 20 || this.todayPomodoroCount > 0) {
+      return '\u72B6\u6001\u4E0D\u9519';
+    }
+    return '\u9700\u8981\u4F11\u606F';
+  }
+
+  getMoExpressionState(): string {
+    if (this.todayCompletedCount >= 3) {
+      return 'achieve';
+    }
     if (this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0) {
-      return '\uD83C\uDF27 \u7B49\u4F60\u56DE\u6765';
+      return 'sleepy';
     }
-    if (this.todayFocusMinutes >= 60 || this.todayPomodoroCount >= 3) {
-      return '\uD83D\uDD25 \u4ECA\u5929\u8D85\u52AA\u529B';
+    if (this.focusTaskKey.length > 0) {
+      return 'focus';
     }
-    if (!this.isFocusRunning && this.focusTaskKey.length > 0) {
-      return '\uD83D\uDE2A \u6709\u70B9\u7D2F\u4E86\uFF0C\u6162\u6162\u6765';
+    if (this.todayFocusMinutes >= 60 || this.focusTaskKey.length > 0) {
+      return 'serious';
     }
-    if (this.todayCompletedCount > 0 || this.todayPomodoroCount > 0) {
-      return '\uD83D\uDE0A \u72B6\u6001\u5F88\u597D';
+    if (this.todayPomodoroCount >= 2 || this.todayCompletedCount > 0) {
+      return 'happy';
     }
-    return '\uD83C\uDF31 \u6162\u6162\u6765\u4E5F\u5F88\u597D';
+    return 'serious';
   }
 
   getStudyBuddyMessage(): string {
-    if (this.todayEarlyExitCount > 0 && this.todayPomodoroCount === 0) {
-      return '\u521A\u624D\u505C\u4E0B\u4E5F\u6CA1\u5173\u7CFB\uFF0C\u4E0B\u4E00\u4E2A 5 \u5206\u949F\u6211\u8FD8\u966A\u4F60\u3002';
+    if (this.todayFocusMinutes >= 60) {
+      return '\u4ECA\u5929\u72B6\u6001\u5F88\u597D\uFF0C\u5C0Fmo\u90FD\u88AB\u4F60\u5E26\u52A8\u5566\u3002';
     }
-    if (this.focusTaskKey.length > 0 && this.isFocusRunning) {
-      return '\u518D\u575A\u6301\u4E00\u4E2A\u756A\u8304\u5C31\u4F11\u606F\uFF0C\u6211\u4F1A\u966A\u7740\u4F60\u3002';
+    if (this.todayPomodoroCount >= 2) {
+      return '\u5B8C\u6210\u597D\u51E0\u4E2A\u756A\u8304\u5566\uFF0C\u7EE7\u7EED\u4FDD\u6301\u3002';
     }
-    if (this.focusTaskKey.length > 0) {
-      return '\u4F11\u606F\u4E00\u4E0B\u4E5F\u662F\u8282\u594F\u7684\u4E00\u90E8\u5206\u3002';
+    if (this.todayCompletedCount >= 3) {
+      return '\u4EFB\u52A1\u63A8\u8FDB\u5F97\u5F88\u68D2\u3002';
     }
-    return '\u5148\u9009\u4E00\u4E2A\u5C0F\u4EFB\u52A1\u5427\uFF0C\u6211\u4EEC\u4E00\u8D77\u5F00\u59CB\u3002';
+    if (this.todayEarlyExitCount > 0) {
+      return '\u6CA1\u5173\u7CFB\uFF0C\u4E0B\u4E00\u6B21\u6211\u4EEC\u4E00\u8D77\u575A\u6301\u4E45\u4E00\u70B9\u3002';
+    }
+    return '\u5148\u4ECE\u4E00\u4E2A\u5C0F\u76EE\u6807\u5F00\u59CB\u5427\u3002';
   }
 
   getStudyBuddyCompanionState(): string {
@@ -1532,12 +1707,170 @@ struct ToDoList {
     return quotes[safeIndex];
   }
 
+  getMoStageName(): string {
+    let level = this.getPetLevel();
+    if (level <= 1 && this.todayFocusMinutes < 30) {
+      return '\u86CB';
+    }
+    if (level <= 2) {
+      return '\u7834\u58F3';
+    }
+    if (level <= 4) {
+      return '\u5E7C\u5D3D';
+    }
+    if (level <= 7) {
+      return '\u6210\u957F\u671F';
+    }
+    return '\u5B66\u4E60\u4F19\u4F34';
+  }
+
+  getMoNextStageName(): string {
+    let level = this.getPetLevel();
+    if (level <= 1 && this.todayFocusMinutes < 30) {
+      return '\u7834\u58F3';
+    }
+    if (level <= 2) {
+      return '\u5E7C\u5D3D';
+    }
+    if (level <= 4) {
+      return '\u6210\u957F\u671F';
+    }
+    if (level <= 7) {
+      return '\u5B66\u4E60\u4F19\u4F34';
+    }
+    return '\u5DF2\u8FBE\u5230\u5F53\u524D\u6700\u9AD8\u9636\u6BB5';
+  }
+
+  getMoStageProgress(): number {
+    let level = this.getPetLevel();
+    if (level <= 1 && this.todayFocusMinutes < 30) {
+      return this.getPetProgress();
+    }
+    if (level <= 2) {
+      return this.getPetProgress();
+    }
+    if (level <= 4) {
+      return level === 3 ? 50 : 100;
+    }
+    if (level <= 7) {
+      return Math.round((level - 4) * 100 / 4);
+    }
+    return 100;
+  }
+
+  getMoNextStageText(): string {
+    let level = this.getPetLevel();
+    if (level <= 1 && this.todayFocusMinutes < 30) {
+      return '\u8FBE\u5230 Lv2 \u6216\u4ECA\u65E5\u7D2F\u8BA1\u4E13\u6CE8 30 \u5206\u949F\uFF0C\u5C0Fmo\u5C31\u4F1A\u5F00\u59CB\u7834\u58F3';
+    }
+    if (level <= 2) {
+      return '\u8FBE\u5230 Lv3 \u540E\uFF0C\u5C0Fmo\u4F1A\u6B63\u5F0F\u8BDE\u751F';
+    }
+    if (level <= 4) {
+      return '\u8FBE\u5230 Lv5 \u540E\uFF0C\u5C0Fmo\u4F1A\u8FDB\u5165\u6210\u957F\u671F';
+    }
+    if (level <= 7) {
+      return '\u8FBE\u5230 Lv8 \u540E\uFF0C\u5C0Fmo\u4F1A\u6210\u4E3A\u5B66\u4E60\u4F19\u4F34';
+    }
+    return '\u5DF2\u8FBE\u5230\u5F53\u524D\u6700\u9AD8\u9636\u6BB5';
+  }
+
+  getMoStageMessage(): string {
+    let stageName = this.getMoStageName();
+    if (stageName === '\u86CB') {
+      return '\u5C0Fmo\u6B63\u5728\u86CB\u91CC\u7761\u89C9';
+    }
+    if (stageName === '\u7834\u58F3') {
+      return '\u5C0Fmo\u597D\u50CF\u5FEB\u51FA\u6765\u5566';
+    }
+    if (stageName === '\u5E7C\u5D3D') {
+      return '\u5C0Fmo\u8BDE\u751F\u5566';
+    }
+    if (stageName === '\u6210\u957F\u671F') {
+      return '\u5C0Fmo\u957F\u5927\u4E86\u4E00\u70B9\uFF0C\u60F3\u5E26\u7740\u88C5\u9970\u966A\u4F60\u5B66\u4E60';
+    }
+    return '\u5C0Fmo\u5750\u5728\u4E66\u684C\u65C1\uFF0C\u5B89\u9759\u966A\u4F60\u5B66\u4E60';
+  }
+
+  getMoTodayCompanionText(): string {
+    if (this.focusTaskKey.length > 0 && this.isFocusRunning) {
+      return '\u5C0Fmo\u8BA4\u771F\u5B66\u4E60';
+    }
+    if (this.todayCompletedCount >= 3) {
+      return '\u5C0Fmo\u4ECA\u5929\u5F88\u5F00\u5FC3';
+    }
+    if (this.todayFocusMinutes <= 0) {
+      return '\u5C0Fmo\u5728\u6253\u76F9';
+    }
+    return '\u5C0Fmo\u6B63\u5728\u6162\u6162\u79EF\u6512\u80FD\u91CF';
+  }
+
+  getDailyCompanionQuote(): string {
+    let quotes: string[] = [
+      '\u4ECA\u5929\u4E5F\u966A\u4F60\u5B66\u4E00\u70B9\u70B9\u3002',
+      '\u5148\u5F00\u59CB\uFF0C\u6BD4\u5B8C\u7F8E\u66F4\u91CD\u8981\u3002',
+      '\u5C0F\u6B65\u524D\u8FDB\u4E5F\u662F\u524D\u8FDB\u3002',
+      '\u4E0D\u6025\uFF0C\u6211\u4EEC\u6162\u6162\u6765\u3002'
+    ];
+    let seed = 0;
+    let todayText = this.getTodayString();
+    for (let index = 0; index < todayText.length; index++) {
+      seed += todayText.charCodeAt(index);
+    }
+    return quotes[seed % quotes.length];
+  }
+
+  getStudyRoomName(index: number): string {
+    let names: string[] = ['\u5976\u6CB9\u4E66\u684C', '\u6DF1\u591C\u81EA\u4E60\u5BA4', '\u6E05\u6668\u7A97\u8FB9',
+      '\u661F\u7A7A\u623F\u95F4'];
+    return names[Math.max(0, index) % names.length];
+  }
+
+  getStudyRoomTag(index: number): string {
+    let tags: string[] = ['\u67D4\u8F6F\u5976\u6CB9', '\u5B89\u9759\u6DF1\u591C', '\u6E05\u65B0\u5149\u611F',
+      '\u7F13\u6162\u661F\u5149'];
+    return tags[Math.max(0, index) % tags.length];
+  }
+
+  getStudyRoomDesc(index: number): string {
+    let descriptions: string[] = ['\u6E29\u67D4\u5F00\u59CB\u4ECA\u5929\u7684\u5B66\u4E60',
+      '\u5B89\u9759\u5730\u628A\u601D\u8DEF\u6536\u56DE\u6765',
+      '\u8BA9\u6E05\u723D\u8282\u594F\u5E26\u4F60\u8FDB\u5165\u72B6\u6001',
+      '\u653E\u6162\u4E00\u70B9\uFF0C\u628A\u76EE\u6807\u6536\u597D',
+      '\u5728\u96E8\u58F0\u91CC\u7559\u4E00\u4E2A\u5B89\u9759\u89D2\u843D'];
+    return descriptions[Math.max(0, index) % descriptions.length];
+  }
+
+  getStudyRoomColor(index: number): string {
+    let colors: string[] = ['#FFF3DF', '#E9ECFF', '#E9F8ED', '#F3EDFF'];
+    return colors[Math.max(0, index) % colors.length];
+  }
+
+  getStudyRoomAccentColor(index: number): string {
+    let colors: string[] = ['#E5B86E', '#7D83C7', '#8CC79B', '#A991DA'];
+    return colors[Math.max(0, index) % colors.length];
+  }
+
+  touchStudyBuddy() {
+    let replies: string[] = ['\u5C0Fmo\u5728\u5462\uff5e', '\u4ECA\u5929\u4E5F\u4E00\u8D77\u52AA\u529B\u5440\u3002',
+      '\u4F60\u5DF2\u7ECF\u5F88\u68D2\u5566\u3002', '\u518D\u6765\u4E00\u4E2A\u5C0F\u76EE\u6807\u5427\u3002'];
+    this.studyBuddyReply = replies[Math.floor(Math.random() * replies.length)];
+  }
+
   formatFocusTime(): string {
     let minute = Math.floor(this.focusRemainingSeconds / 60);
     let second = this.focusRemainingSeconds % 60;
     let minuteText = minute < 10 ? `0${minute}` : `${minute}`;
     let secondText = second < 10 ? `0${second}` : `${second}`;
     return `${minuteText}:${secondText}`;
+  }
+
+  formatSecondsText(totalSeconds: number): string {
+    let safeSeconds = Math.max(0, Math.round(totalSeconds));
+    let minute = Math.floor(safeSeconds / 60);
+    let second = safeSeconds % 60;
+    let secondText = second < 10 ? `0${second}` : `${second}`;
+    return `${minute}:${secondText}`;
   }
 
   getFocusProgress(): number {
@@ -1566,36 +1899,24 @@ struct ToDoList {
       return;
     }
     let wasCompleted = this.toDoData[targetIndex].isCompleted;
-    let sourceItem = this.toDoData[targetIndex];
-    let updatedItem = ToDo.fromStorage(
-      sourceItem.key,
-      sourceItem.name,
-      sourceItem.createdAt,
-      sourceItem.priority,
-      !wasCompleted,
-      sourceItem.focusCount,
-      sourceItem.focusDurationMinutes,
-      sourceItem.deadline
-    );
-    let completedNow = updatedItem.isCompleted;
-    this.toDoData[targetIndex] = updatedItem;
     hilog.info(0x0000, 'Index',
-      `toggle key=${normalizedKey}, targetIndex=${targetIndex}, before=${wasCompleted}, after=${completedNow}`);
-    this.toDoData = [...this.toDoData];
-    if (completedNow) {
-      this.addGrowthReward(10);
-      this.todayCompletedCount += 1;
-      try {
-        this.grantAchievedDailyGoals();
-      } catch (error) {
-        let err = error as BusinessError;
-        hilog.error(0x0000, 'Index', `grant daily goal failed. error code=${err.code}, message=${err.message}`);
-      }
-    } else {
-      this.score = Math.max(0, this.score - 10);
-      this.todayCompletedCount = Math.max(0, this.todayCompletedCount - 1);
+      `toggle key=${normalizedKey}, targetIndex=${targetIndex}, before=${wasCompleted}, after=removed`);
+    this.toDoData = this.toDoData.filter((todoItem: ToDo) => String(todoItem.key) !== normalizedKey);
+    if (!wasCompleted) {
+      this.recordTaskCompletion();
     }
     this.saveAppState();
+  }
+
+  recordTaskCompletion() {
+    this.addGrowthReward(10);
+    this.todayCompletedCount += 1;
+    try {
+      this.grantAchievedDailyGoals();
+    } catch (error) {
+      let err = error as BusinessError;
+      hilog.error(0x0000, 'Index', `grant daily goal failed. error code=${err.code}, message=${err.message}`);
+    }
   }
 
   updateTodoItem(item: ToDo) {
@@ -1609,6 +1930,9 @@ struct ToDoList {
   }
 
   showToastMessage(message: string) {
+    if (message === '\u4E13\u6CE8\u5DF2\u6682\u505C' || message === '\u4E13\u6CE8\u5DF2\u7EE7\u7EED') {
+      return;
+    }
     try {
       this.getUIContext().getPromptAction().showToast({ message: message });
     } catch (error) {
@@ -1657,14 +1981,19 @@ struct ToDoList {
       return;
     }
     if (this.ownedOutfits[index]) {
-      this.equippedOutfitIndex = index;
-      this.showToastMessage('\u88C5\u626E\u5DF2\u88C5\u5907');
-      this.saveAppState();
+      this.equipOutfit(index);
+      return;
+    }
+    this.redeemOutfit(index);
+  }
+
+  redeemOutfit(index: number) {
+    if (index < 0 || index >= this.outfitNames.length || this.ownedOutfits[index]) {
       return;
     }
     let price = this.outfitPrices[index];
     if (this.score < price) {
-      this.showToastMessage('\u79EF\u5206\u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u5151\u6362\u88C5\u626E');
+      this.showToastMessage('\u79EF\u5206\u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u5151\u6362\u88C5\u9970');
       return;
     }
     let updatedOutfits = [...this.ownedOutfits];
@@ -1672,7 +2001,16 @@ struct ToDoList {
     this.ownedOutfits = updatedOutfits;
     this.equippedOutfitIndex = index;
     this.score -= price;
-    this.showToastMessage('\u88C5\u626E\u5DF2\u5151\u6362\u5E76\u88C5\u5907');
+    this.showToastMessage('\u88C5\u9970\u5DF2\u5151\u6362\u5E76\u4F69\u6234');
+    this.saveAppState();
+  }
+
+  equipOutfit(index: number) {
+    if (index < 0 || index >= this.outfitNames.length || !this.ownedOutfits[index]) {
+      return;
+    }
+    this.equippedOutfitIndex = index;
+    this.showToastMessage('\u88C5\u9970\u5DF2\u4F69\u6234');
     this.saveAppState();
   }
 
@@ -1758,8 +2096,8 @@ struct ToDoList {
       return;
     }
     try {
-      await this.taskTransferService.init(hostContext as common.UIAbilityContext, (payload: TaskTransferPayload) => {
-        this.receiveRemoteTask(payload);
+      await this.taskTransferService.init(hostContext as common.UIAbilityContext, (payload: FreeFlowPayload) => {
+        this.receiveFreeFlowPayload(payload);
       });
       this.hasInitializedTransfer = true;
     } catch (error) {
@@ -1809,10 +2147,10 @@ struct ToDoList {
 
   showDeliveryPicker(item: ToDo) {
     AlertDialog.show({
-      title: '\u6295\u9001\u4EFB\u52A1',
-      message: '\u9009\u62E9\u771F\u5B9E\u8DE8\u8BBE\u5907\u6295\u9001\uFF0C\u6216\u4EC5\u4FDD\u7559\u4E00\u6761\u672C\u5730\u6A21\u62DF\u8BB0\u5F55\u3002',
+      title: '\u6D41\u8F6C\u5230\u5176\u4ED6\u8BBE\u5907',
+      message: '\u5C06\u8BE5\u4EFB\u52A1\u5199\u5165\u5206\u5E03\u5F0FKV\u5E76\u53D1\u8D77\u8BBE\u5907\u540C\u6B65\uFF1B\u5982\u679C\u771F\u673A\u53D1\u73B0\u4E0D\u53EF\u7528\uFF0C\u4F7F\u7528\u672C\u5730\u53EF\u9A8C\u8BC1\u515C\u5E95\u3002',
       primaryButton: {
-        value: '\u771F\u5B9E\u6295\u9001',
+        value: '\u9009\u62E9\u8BBE\u5907',
         action: () => {
           this.showRealDeliveryDevicePicker(item);
         }
@@ -1893,16 +2231,17 @@ struct ToDoList {
   }
 
   async sendRealTask(item: ToDo, targetDevice: TransferDevice): Promise<void> {
-    this.realDeliveryStatus = `\u53D1\u9001\u4E2D\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+    this.realDeliveryStatus = `\u6D41\u8F6C\u4E2D\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
     this.lastDeliveryType = '\u771F\u5B9E\u6295\u9001';
     this.lastRealSentTask = `${item.name} \u2192 ${targetDevice.displayName}`;
     this.lastDeliveryRecord = this.realDeliveryStatus;
     this.saveAppState();
     try {
-      await this.taskTransferService.sendTask(targetDevice, this.buildTaskTransferPayload(item));
-      this.realDeliveryStatus = `\u540C\u6B65\u5DF2\u53D1\u8D77\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+      let result = await this.taskTransferService.transferTaskToDevice(this.buildTransferTodoData(item),
+        targetDevice.networkId);
+      this.realDeliveryStatus = `${result.fallback ? '\u515C\u5E95\u6F14\u793A' : '\u540C\u6B65\u5DF2\u53D1\u8D77'}\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
       this.lastDeliveryRecord = this.realDeliveryStatus;
-      this.showToastMessage('\u5DF2\u5199\u5165\u672C\u5730KV\u5E76\u53D1\u8D77\u540C\u6B65\uFF0C\u4E0D\u4EE3\u8868\u76EE\u6807\u8BBE\u5907\u5DF2\u6536\u5230');
+      this.showToastMessage(result.message);
     } catch (error) {
       let err = error as BusinessError;
       this.realDeliveryStatus = `\u53D1\u9001\u5931\u8D25\uFF1A${err.message}`;
@@ -1912,8 +2251,67 @@ struct ToDoList {
     this.saveAppState();
   }
 
-  buildTaskTransferPayload(item: ToDo): TaskTransferPayload {
-    let taskData: TransferTodoData = {
+  async showFocusTransferDevicePicker(): Promise<void> {
+    if (this.focusTaskKey.length === 0) {
+      this.showToastMessage('\u8BF7\u5148\u9009\u62E9\u4E00\u4E2A\u4E13\u6CE8\u4EFB\u52A1');
+      return;
+    }
+    let hasPermission = await this.ensureDistributedDataSyncPermission();
+    if (!hasPermission) {
+      return;
+    }
+    await this.initTaskTransfer();
+    if (!this.hasInitializedTransfer) {
+      this.showToastMessage('\u81EA\u7531\u6D41\u8F6C\u521D\u59CB\u5316\u5931\u8D25');
+      return;
+    }
+    try {
+      let devices = await this.taskTransferService.getAvailableDevices();
+      this.discoveredDeviceCount = devices.length;
+      this.realDeliveryDevices = devices;
+      this.getUIContext().showTextPickerDialog({
+        range: devices.map((device: TransferDevice) => device.displayName),
+        onAccept: (value: TextPickerResult) => {
+          let selectedDevice = this.realDeliveryDevices[Number(value.index)];
+          if (selectedDevice !== undefined) {
+            this.sendFocusState(selectedDevice);
+          }
+        }
+      });
+    } catch (error) {
+      let err = error as BusinessError;
+      this.realDeliveryStatus = `\u4E13\u6CE8\u6D41\u8F6C\u5931\u8D25\uFF1A${err.message}`;
+      this.showToastMessage('\u83B7\u53D6\u8BBE\u5907\u5931\u8D25');
+      this.saveAppState();
+    }
+  }
+
+  async sendFocusState(targetDevice: TransferDevice): Promise<void> {
+    let focusData: TransferFocusData = {
+      taskTitle: this.getFocusTaskName(),
+      remainingSeconds: Math.max(0, this.focusRemainingSeconds),
+      totalSeconds: Math.max(60, this.focusTotalSeconds),
+      isPaused: !this.isFocusRunning
+    };
+    this.lastDeliveryType = '\u4E13\u6CE8\u6D41\u8F6C';
+    this.lastRealSentTask = `${focusData.taskTitle} \u2192 ${targetDevice.displayName}`;
+    this.realDeliveryStatus = `\u4E13\u6CE8\u6D41\u8F6C\u4E2D\uFF1A${focusData.taskTitle}`;
+    this.saveAppState();
+    try {
+      let result: TransferResult = await this.taskTransferService.transferFocusState(focusData, targetDevice.networkId);
+      this.realDeliveryStatus = `${result.fallback ? '\u515C\u5E95\u6F14\u793A' : '\u540C\u6B65\u5DF2\u53D1\u8D77'}\uFF1A\u4E13\u6CE8\u72B6\u6001 \u2192 ${targetDevice.displayName}`;
+      this.lastDeliveryRecord = this.realDeliveryStatus;
+      this.showToastMessage(result.message);
+    } catch (error) {
+      let err = error as BusinessError;
+      this.realDeliveryStatus = `\u4E13\u6CE8\u6D41\u8F6C\u5931\u8D25\uFF1A${err.message}`;
+      this.showToastMessage('\u4E13\u6CE8\u72B6\u6001\u6D41\u8F6C\u5931\u8D25');
+    }
+    this.saveAppState();
+  }
+
+  buildTransferTodoData(item: ToDo): TransferTodoData {
+    return {
       key: item.key,
       name: item.name,
       createdAt: item.createdAt,
@@ -1921,39 +2319,246 @@ struct ToDoList {
       isCompleted: item.isCompleted,
       focusCount: item.focusCount,
       focusDurationMinutes: item.focusDurationMinutes,
-      deadline: item.deadline
+      deadline: item.deadline,
+      taskType: item.taskType,
+      plannedFocusMinutes: item.plannedFocusMinutes,
+      category: item.category,
+      repeatType: item.repeatType,
+      cardThemeIndex: item.cardThemeIndex
     };
+  }
+
+  buildTaskTransferPayload(item: ToDo): TaskTransferPayload {
+    let taskData: TransferTodoData = this.buildTransferTodoData(item);
     return {
+      type: 'todo_transfer',
+      version: 1,
       transferId: this.taskTransferService.buildTransferId(),
       sourceDeviceId: this.taskTransferService.getLocalDeviceId(),
       sourceDeviceName: this.taskTransferService.getLocalDeviceName(),
+      fromDevice: this.taskTransferService.getLocalDeviceName(),
       sentAt: Date.now(),
+      timestamp: Date.now(),
       task: taskData
     };
+  }
+
+  receiveFreeFlowPayload(payload: FreeFlowPayload) {
+    if ((payload as FocusTransferPayload).focus !== undefined) {
+      this.receiveRemoteFocus(payload as FocusTransferPayload);
+      return;
+    }
+    this.receiveRemoteTask(payload as TaskTransferPayload);
   }
 
   receiveRemoteTask(payload: TaskTransferPayload) {
     if (this.receivedTransferIds.includes(payload.transferId)) {
       return;
     }
-    let remoteTask = ToDo.fromStorage(
-      '',
-      payload.task.name,
-      Date.now(),
-      this.normalizePriority(payload.task.priority),
-      false,
-      Math.max(0, payload.task.focusCount),
-      Math.max(0, payload.task.focusDurationMinutes),
-      Math.max(0, payload.task.deadline)
-    );
-    this.toDoData = [remoteTask, ...this.toDoData];
     this.receivedTransferIds = [payload.transferId, ...this.receivedTransferIds].slice(0, 100);
     this.lastDeliveryType = '\u771F\u5B9E\u6295\u9001';
     this.lastRealReceivedTask = payload.task.name;
-    this.realDeliveryStatus = `\u5DF2\u63A5\u6536\uFF1A${payload.task.name}`;
+    this.realDeliveryStatus = `\u5DF2\u63A5\u6536\uFF1A${payload.task.name}\uFF0C\u7B49\u5F85\u786E\u8BA4\u52A0\u5165`;
     this.lastDeliveryRecord = this.realDeliveryStatus;
-    this.showToastMessage(`\u5DF2\u63A5\u6536\u8DE8\u8BBE\u5907\u4EFB\u52A1\uFF1A${payload.task.name}`);
+    this.pendingTransferKind = 'todo';
+    this.pendingTransferId = payload.transferId;
+    this.pendingTransferSource = payload.fromDevice === undefined ? payload.sourceDeviceName : payload.fromDevice;
+    this.pendingTaskName = payload.task.name;
+    this.pendingTaskType = ToDo.normalizeTaskType(payload.task.taskType);
+    this.pendingTaskPriority = this.normalizePriority(payload.task.priority);
+    this.pendingTaskDeadline = Math.max(0, payload.task.deadline);
+    this.pendingTaskCategory = payload.task.category.length > 0 ? payload.task.category : payload.task.name;
+    this.pendingTaskRepeatType = payload.task.repeatType.length > 0 ? payload.task.repeatType : '\u4E0D\u91CD\u590D';
+    this.pendingTaskFocusCount = Math.max(0, payload.task.focusCount);
+    this.pendingTaskFocusMinutes = Math.max(0, payload.task.focusDurationMinutes);
+    this.pendingTaskPlannedMinutes = Math.max(1, payload.task.plannedFocusMinutes);
+    this.pendingTaskCardThemeIndex = payload.task.cardThemeIndex;
+    this.showToastMessage(`\u6536\u5230\u6765\u81EA ${this.pendingTransferSource} \u7684\u4EFB\u52A1`);
     this.saveAppState();
+  }
+
+  receiveRemoteFocus(payload: FocusTransferPayload) {
+    if (this.receivedTransferIds.includes(payload.transferId)) {
+      return;
+    }
+    this.receivedTransferIds = [payload.transferId, ...this.receivedTransferIds].slice(0, 100);
+    this.lastDeliveryType = '\u4E13\u6CE8\u6D41\u8F6C';
+    this.lastRealReceivedTask = payload.focus.taskTitle;
+    this.realDeliveryStatus = `\u6536\u5230\u4E13\u6CE8\u4EFB\u52A1\uFF1A${payload.focus.taskTitle}`;
+    this.lastDeliveryRecord = this.realDeliveryStatus;
+    this.pendingTransferKind = 'focus';
+    this.pendingTransferId = payload.transferId;
+    this.pendingTransferSource = payload.fromDevice === undefined ? payload.sourceDeviceName : payload.fromDevice;
+    this.pendingFocusTaskTitle = payload.focus.taskTitle;
+    this.pendingFocusRemainingSeconds = Math.max(0, payload.focus.remainingSeconds);
+    this.pendingFocusTotalSeconds = Math.max(60, payload.focus.totalSeconds);
+    this.pendingFocusIsPaused = payload.focus.isPaused;
+    this.showToastMessage(`\u6536\u5230\u6765\u81EA ${this.pendingTransferSource} \u7684\u4E13\u6CE8\u4EFB\u52A1`);
+    this.saveAppState();
+  }
+
+  buildPendingReceivedTodo(): ToDo {
+    return new ToDo(
+      this.pendingTaskName,
+      this.normalizePriority(this.pendingTaskPriority),
+      Math.max(0, this.pendingTaskDeadline),
+      this.pendingTaskCategory.length > 0 ? this.pendingTaskCategory : this.pendingTaskName,
+      this.pendingTaskRepeatType.length > 0 ? this.pendingTaskRepeatType : '\u4E0D\u91CD\u590D',
+      ToDo.normalizeTaskType(this.pendingTaskType),
+      Math.max(1, this.pendingTaskPlannedMinutes),
+      this.pendingTaskCardThemeIndex
+    );
+  }
+
+  acceptPendingTask(shouldStartFocus: boolean) {
+    if (this.pendingTransferKind !== 'todo' || this.pendingTaskName.length === 0) {
+      return;
+    }
+    let newItem = this.buildPendingReceivedTodo();
+    newItem.focusCount = Math.max(0, this.pendingTaskFocusCount);
+    newItem.focusDurationMinutes = Math.max(0, this.pendingTaskFocusMinutes);
+    this.toDoData = [newItem, ...this.toDoData];
+    this.lastDeliveryRecord = `\u5DF2\u52A0\u5165\u6D41\u8F6C\u4EFB\u52A1\uFF1A${newItem.name}`;
+    this.realDeliveryStatus = this.lastDeliveryRecord;
+    this.clearPendingTransfer();
+    this.saveAppState();
+    if (shouldStartFocus) {
+      if (newItem.taskType !== 'focus') {
+        newItem.taskType = 'focus';
+      }
+      this.startFocus(newItem, newItem.plannedFocusMinutes);
+    } else {
+      this.showToastMessage('\u5DF2\u52A0\u5165\u6211\u7684\u4EE3\u529E');
+    }
+  }
+
+  startPendingFocusTransfer() {
+    if (this.pendingTransferKind !== 'focus' || this.pendingFocusTaskTitle.length === 0) {
+      return;
+    }
+    let focusMinutes = Math.max(1, Math.round(this.pendingFocusTotalSeconds / 60));
+    let newItem = new ToDo(this.pendingFocusTaskTitle, 1, 0, this.pendingFocusTaskTitle, '\u4E0D\u91CD\u590D',
+      'focus', focusMinutes, -1);
+    this.toDoData = [newItem, ...this.toDoData];
+    this.lastDeliveryRecord = `\u4ECE\u6D41\u8F6C\u4E13\u6CE8\u91CD\u65B0\u5F00\u59CB\uFF1A${newItem.name}`;
+    this.realDeliveryStatus = this.lastDeliveryRecord;
+    this.clearPendingTransfer();
+    this.saveAppState();
+    this.startFocus(newItem, focusMinutes);
+  }
+
+  clearPendingTransfer() {
+    this.pendingTransferKind = '';
+    this.pendingTransferId = '';
+    this.pendingTransferSource = '';
+    this.pendingTaskName = '';
+    this.pendingTaskType = 'focus';
+    this.pendingTaskPriority = 1;
+    this.pendingTaskDeadline = 0;
+    this.pendingTaskCategory = '\u9ED8\u8BA4';
+    this.pendingTaskRepeatType = '\u4E0D\u91CD\u590D';
+    this.pendingTaskFocusCount = 0;
+    this.pendingTaskFocusMinutes = 0;
+    this.pendingTaskPlannedMinutes = 25;
+    this.pendingTaskCardThemeIndex = -1;
+    this.pendingFocusTaskTitle = '';
+    this.pendingFocusRemainingSeconds = 0;
+    this.pendingFocusTotalSeconds = 0;
+    this.pendingFocusIsPaused = false;
+  }
+
+  @Builder
+  receivedFreeFlowCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text(this.pendingTransferKind === 'focus' ? `\u6536\u5230\u6765\u81EA ${this.pendingTransferSource} \u7684\u4E13\u6CE8\u4EFB\u52A1` :
+          `\u6536\u5230\u6765\u81EA ${this.pendingTransferSource} \u7684\u4EFB\u52A1`)
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text('\u5FFD\u7565')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .padding({
+            left: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            right: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor('#F1F3F5')
+          .onClick(() => {
+            this.clearPendingTransfer();
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      if (this.pendingTransferKind === 'focus') {
+        this.receivedFocusContent()
+      } else {
+        this.receivedTaskContent()
+      }
+    }
+    .width(Constant.PERCENT_FULL)
+    .constraintSize({ maxWidth: 760 })
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#F6F1FF')
+    .shadow({ radius: 14, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 5 })
+  }
+
+  @Builder
+  receivedTaskContent() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.deliveryStatusRow('\u4EFB\u52A1\u540D', this.pendingTaskName)
+      this.deliveryStatusRow('\u4EFB\u52A1\u7C7B\u578B', this.getTaskTypeText(this.pendingTaskType))
+      this.deliveryStatusRow('\u622A\u6B62\u65E5\u671F', this.getDeadlineDateText(this.pendingTaskDeadline))
+      this.deliveryStatusRow('\u4F18\u5148\u7EA7', this.getPriorityName(this.pendingTaskPriority))
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.freeFlowActionButton('\u52A0\u5165\u6211\u7684\u4EE3\u529E', UI_COLORS.MINT, () => {
+          this.acceptPendingTask(false);
+        })
+        this.freeFlowActionButton('\u7ACB\u5373\u5F00\u59CB\u4E13\u6CE8', UI_COLORS.FOCUS_BLUE, () => {
+          this.acceptPendingTask(true);
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  receivedFocusContent() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.deliveryStatusRow('\u4E13\u6CE8\u4EFB\u52A1', this.pendingFocusTaskTitle)
+      this.deliveryStatusRow('\u603B\u65F6\u957F', `${Math.round(this.pendingFocusTotalSeconds / 60)}\u5206\u949F`)
+      this.deliveryStatusRow('\u5269\u4F59\u65F6\u95F4', this.formatSecondsText(this.pendingFocusRemainingSeconds))
+      this.deliveryStatusRow('\u72B6\u6001', this.pendingFocusIsPaused ? '\u5DF2\u6682\u505C' : '\u6D41\u8F6C\u65F6\u6B63\u5728\u4E13\u6CE8')
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.freeFlowActionButton('\u4EE5\u5B8C\u6574\u65F6\u957F\u91CD\u65B0\u5F00\u59CB', UI_COLORS.FOCUS_BLUE, () => {
+          this.startPendingFocusTransfer();
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  freeFlowActionButton(labelText: string, bgColor: ResourceColor, action: () => void) {
+    Text(labelText)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(Color.White)
+      .fontWeight(FontWeight.Medium)
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .padding({
+        top: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+        bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
+      })
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor(bgColor)
+      .onClick(action)
   }
 
   showTodoDetail(item: ToDo) {
@@ -1961,6 +2566,8 @@ struct ToDoList {
       title: '\u4EFB\u52A1\u8BE6\u60C5',
       message: `\u4EFB\u52A1\u540D\u79F0\uFF1A${item.name}\n` +
         `\u4F18\u5148\u7EA7\uFF1A${this.getPriorityName(item.priority)}\n` +
+        `\u5206\u7C7B\uFF1A${item.category}\n` +
+        `\u91CD\u590D\uFF1A${item.repeatType}\n` +
         `\u5B8C\u6210\u72B6\u6001\uFF1A${item.isCompleted ? '\u5DF2\u5B8C\u6210' : '\u672A\u5B8C\u6210'}\n` +
         `\u521B\u5EFA\u65F6\u95F4\uFF1A${this.formatDateTime(item.createdAt)}\n` +
         `\u622A\u6B62\u65E5\u671F\uFF1A${this.getDeadlineDateText(item.deadline)}\n` +
@@ -1984,6 +2591,128 @@ struct ToDoList {
     }
     this.toDoData = this.toDoData.filter(todoItem => item.key !== todoItem.key);
     this.showToastMessage('\u5DF2\u5220\u9664');
+    this.saveAppState();
+  }
+
+  completeOnceTaskAndRemove(itemKey: string) {
+    let normalizedKey = String(itemKey);
+    let targetItem = this.toDoData.find((todoItem: ToDo) => String(todoItem.key) === normalizedKey);
+    if (targetItem === undefined || targetItem.taskType !== 'once') {
+      return;
+    }
+    this.toDoData = this.toDoData.filter((todoItem: ToDo) => String(todoItem.key) !== normalizedKey);
+    this.recordTaskCompletion();
+    this.showToastMessage('\u4E00\u6B21\u6027\u4EFB\u52A1\u5DF2\u5B8C\u6210');
+    this.saveAppState();
+  }
+
+  completeTaskByKey(itemKey: string) {
+    let normalizedKey = String(itemKey);
+    let targetItem = this.toDoData.find((todoItem: ToDo) => String(todoItem.key) === normalizedKey);
+    if (targetItem === undefined) {
+      return;
+    }
+    this.toDoData = this.toDoData.filter((todoItem: ToDo) => String(todoItem.key) !== normalizedKey);
+    if (!targetItem.isCompleted) {
+      this.recordTaskCompletion();
+    }
+    this.showToastMessage('\u4EFB\u52A1\u5DF2\u5B8C\u6210');
+    this.saveAppState();
+  }
+
+  getDeadlineByEditOffset(offset: number, currentDeadline: number): number {
+    if (offset === -2) {
+      return currentDeadline;
+    }
+    if (offset < 0) {
+      return 0;
+    }
+    return this.getDeadlineByOffset(offset);
+  }
+
+  openTodoEditor(item: ToDo) {
+    this.isAddingTodo = false;
+    this.editingTodoKey = item.key;
+  }
+
+  closeTodoEditor() {
+    this.editingTodoKey = '';
+    this.isAddingTodo = false;
+    this.currentTab = 0;
+  }
+
+  getEditingTodo(): ToDo | null {
+    let matchedItems = this.getAllTodos().filter((item: ToDo) => item.key === this.editingTodoKey);
+    if (matchedItems.length === 0) {
+      return null;
+    }
+    return matchedItems[0];
+  }
+
+  saveTodoFromEditor(item: ToDo, name: string, focusMinutes: number, priority: number, deadlineOffset: number,
+    category: string, repeatType: string, taskType: string, cardThemeIndex: number) {
+    let safeName = name.trim().length > 0 ? name.trim() : item.name;
+    let normalizedTaskType = ToDo.normalizeTaskType(taskType);
+    item.name = safeName;
+    item.plannedFocusMinutes = Math.max(1, focusMinutes);
+    item.priority = this.normalizePriority(priority);
+    item.deadline = normalizedTaskType === 'habit' ? 0 : this.getDeadlineByEditOffset(deadlineOffset, item.deadline);
+    item.category = category.trim().length > 0 ? category.trim() : safeName;
+    item.repeatType = repeatType.length > 0 ? repeatType : '\u4E0D\u91CD\u590D';
+    item.taskType = normalizedTaskType;
+    item.cardThemeIndex = cardThemeIndex;
+    this.updateTodoItem(item);
+    this.closeTodoEditor();
+    this.showToastMessage('\u4EFB\u52A1\u5DF2\u66F4\u65B0');
+  }
+
+  saveNewTodoFromForm(item: ToDo, name: string, focusMinutes: number, priority: number, deadlineOffset: number,
+    category: string, repeatType: string, taskType: string, cardThemeIndex: number) {
+    let safeName = name.trim();
+    if (safeName.length === 0) {
+      this.showToastMessage('\u8BF7\u8F93\u5165\u4EFB\u52A1\u540D\u79F0');
+      return;
+    }
+    let normalizedTaskType = ToDo.normalizeTaskType(taskType);
+    let newItem = new ToDo(
+      safeName,
+      this.normalizePriority(priority),
+      normalizedTaskType === 'habit' ? 0 : this.getDeadlineByEditOffset(deadlineOffset, item.deadline),
+      category.trim().length > 0 ? category.trim() : safeName,
+      repeatType.length > 0 ? repeatType : '\u4E0D\u91CD\u590D',
+      normalizedTaskType,
+      Math.max(1, focusMinutes),
+      cardThemeIndex
+    );
+    this.toDoData = [newItem, ...this.toDoData];
+    this.closeTodoEditor();
+    this.showToastMessage('\u5DF2\u65B0\u589E\u4EE3\u529E');
+    this.saveAppState();
+  }
+
+  createDemoTodo(taskName: string) {
+    let newItem = new ToDo(taskName, 1, this.getDeadlineByEditOffset(1, 0), taskName, '\u4E0D\u91CD\u590D',
+      'focus', 25, -1);
+    this.toDoData = [newItem, ...this.toDoData];
+    this.showToastMessage('\u5DF2\u65B0\u589E\u4EE3\u529E');
+    this.saveAppState();
+  }
+
+  showTodoActionMenu(item: ToDo) {
+    this.actionMenuTodoKey = item.key;
+  }
+
+  closeTodoActionMenu() {
+    this.actionMenuTodoKey = '';
+  }
+
+  getActionMenuTodo(): ToDo | undefined {
+    return this.toDoData.find((todoItem: ToDo) => todoItem.key === this.actionMenuTodoKey);
+  }
+
+  pinTodoItem(item: ToDo) {
+    this.toDoData = [item, ...this.toDoData.filter((todoItem: ToDo) => todoItem.key !== item.key)];
+    this.closeTodoActionMenu();
     this.saveAppState();
   }
 
@@ -2486,7 +3215,7 @@ struct ToDoList {
   outfitStore() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       Row() {
-        Text('\uD83C\uDF80 \u88C5\u626E\u5546\u57CE')
+        Text('\u5C0F\u52A8\u7269\u88C5\u9970')
           .fontSize($r('sys.float.ohos_id_text_size_headline8'))
           .fontColor(UI_COLORS.TEXT_PRIMARY)
           .fontWeight(FontWeight.Bold)
@@ -2504,7 +3233,7 @@ struct ToDoList {
           .backgroundColor(UI_COLORS.CREAM_WHITE)
       }
       .width(Constant.PERCENT_FULL)
-      Text('\u7528\u81EA\u5F8B\u79EF\u5206\u5151\u6362\u5C0F\u88C5\u626E\uFF0C\u7ED9\u5B66\u4E60\u4F19\u4F34\u6362\u4E00\u4E2A\u65B0\u5FC3\u60C5')
+      Text(`\u5F53\u524D\u88C5\u9970\uFF1A${this.getEquippedOutfitName()} \u00B7 \u5DF2\u62E5\u6709 ${this.getOwnedOutfitCount()} / ${this.outfitNames.length}`)
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -2529,57 +3258,121 @@ struct ToDoList {
   @Builder
   outfitProductCard(index: number) {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text(this.getOutfitIcon(index))
-        .fontSize(34)
+      Row() {
+        Stack() {
+          Row()
+            .width(68)
+            .height(48)
+            .borderRadius(14)
+            .backgroundColor(this.getOutfitRoomBgColor(index))
+          Row()
+            .width(46)
+            .height(12)
+            .borderRadius(6)
+            .backgroundColor(this.getOutfitScarfColor(index))
+            .position({ x: 11, y: 29 })
+          Row()
+            .width(24)
+            .height(20)
+            .borderRadius(7)
+            .backgroundColor(this.getOutfitPreviewColor(index))
+            .position({ x: 22, y: 15 })
+          Row()
+            .width(20)
+            .height(18)
+            .borderRadius(6)
+            .backgroundColor('#AAFFFFFF')
+            .position({ x: 40, y: 8 })
+        }
+        .width(68)
+        .height(48)
+        Text(this.getOutfitStyleTag(index))
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.equippedOutfitIndex === index ? UI_COLORS.PET_PURPLE : UI_COLORS.TEXT_SECONDARY)
+          .layoutWeight(1)
+          .textAlign(TextAlign.End)
+          .maxLines(1)
+      }
+      .width(Constant.PERCENT_FULL)
       Text(this.getOutfitDisplayName(index))
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
-        .fontColor(this.equippedOutfitIndex === index ? UI_COLORS.PET_PURPLE : UI_COLORS.TEXT_PRIMARY)
-        .fontWeight(FontWeight.Medium)
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
         .maxLines(1)
-      Text(this.ownedOutfits[index] ? '\u5DF2\u62E5\u6709' : `${this.outfitPrices[index]}\u79EF\u5206`)
-        .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(this.ownedOutfits[index] ? UI_COLORS.MINT : UI_COLORS.ORANGE)
-      Text(this.getOutfitActionText(index))
-        .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(this.equippedOutfitIndex === index || (!this.ownedOutfits[index] && this.score >= this.outfitPrices[index]) ?
-          Color.White : UI_COLORS.TEXT_SECONDARY)
-        .textAlign(TextAlign.Center)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(`\u9700\u8981 ${this.outfitPrices[index]}\u79EF\u5206`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.ownedOutfits[index] ? UI_COLORS.TEXT_SECONDARY : UI_COLORS.ORANGE)
+          .layoutWeight(1)
+        Text(this.equippedOutfitIndex === index ? '\u5DF2\u4F69\u6234' : (this.ownedOutfits[index] ? '\u53EF\u4F69\u6234' : '\u672A\u62E5\u6709'))
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.equippedOutfitIndex === index ? UI_COLORS.PET_PURPLE :
+            (this.ownedOutfits[index] ? UI_COLORS.MINT : UI_COLORS.TEXT_WEAK))
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(this.ownedOutfits[index] ? '\u5DF2\u89E3\u9501' : '\u5151\u6362')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.canRedeemOutfit(index) ? Color.White : UI_COLORS.TEXT_SECONDARY)
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .padding({
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(this.canRedeemOutfit(index) ? UI_COLORS.ORANGE : '#F1F3F5')
+          .onClick(() => {
+            this.redeemOutfit(index);
+          })
+        Text(this.equippedOutfitIndex === index ? '\u4F69\u6234\u4E2D' : '\u4F69\u6234')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.ownedOutfits[index] ? Color.White : UI_COLORS.TEXT_SECONDARY)
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .padding({
+            top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+            bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+          })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(this.equippedOutfitIndex === index ? UI_COLORS.PET_PURPLE :
+            (this.ownedOutfits[index] ? UI_COLORS.MINT : '#F1F3F5'))
+          .onClick(() => {
+            this.equipOutfit(index);
+          })
+      }
         .width(Constant.PERCENT_FULL)
-        .padding({
-          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
-          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
-        })
-        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-        .backgroundColor(this.equippedOutfitIndex === index ? UI_COLORS.PET_PURPLE :
-          (!this.ownedOutfits[index] && this.score >= this.outfitPrices[index] ? UI_COLORS.ORANGE : '#F1F3F5'))
     }
     .width('48%')
     .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
-    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
-    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(this.equippedOutfitIndex === index ? UI_COLORS.PINK_LIGHT : Color.White)
+    .padding(14)
+    .borderRadius(24)
+    .backgroundColor(this.equippedOutfitIndex === index ? '#F7EEFF' : (this.ownedOutfits[index] ? '#FFFFFF' : '#FAFAFA'))
+    .opacity(this.ownedOutfits[index] || this.score >= this.outfitPrices[index] ? 1 : 0.62)
+    .border({
+      width: this.equippedOutfitIndex === index ? 1 : 0,
+      color: UI_COLORS.PET_PURPLE
+    })
     .shadow({
-      radius: 8,
-      color: UI_COLORS.CARD_SHADOW,
+      radius: this.equippedOutfitIndex === index ? 12 : 6,
+      color: '#10000000',
       offsetX: 0,
       offsetY: 3
-    })
-    .onClick(() => {
-      this.handleOutfitTap(index);
     })
   }
 
   @Builder
   petCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\uD83D\uDC3E \u5B66\u4E60\u4F19\u4F34')
+      Text('\u5B66\u4E60\u4F19\u4F34')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        Text(this.getPetEmoji())
-          .fontSize(76)
+        this.moOutfitAvatar(128)
         Text(`Lv.${this.getPetLevel()} ${this.getPetName()}`)
           .fontSize($r('sys.float.ohos_id_text_size_headline7'))
           .fontColor(UI_COLORS.PET_PURPLE)
@@ -2674,12 +3467,11 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       Flex({ wrap: FlexWrap.Wrap }) {
-        this.petStagePill('\u5B66\u4E60\u86CB', this.getPetLevel() === 1)
-        this.petStagePill('\u5B66\u4E60\u5E7C\u5D3D', this.getPetLevel() === 2)
-        this.petStagePill('\u52AA\u529B\u5C0F\u732B', this.getPetLevel() === 3)
-        this.petStagePill('\u4E13\u6CE8\u5C0F\u718A', this.getPetLevel() === 4)
-        this.petStagePill('\u667A\u6167\u5C0F\u72D0', this.getPetLevel() === 5)
-        this.petStagePill('\u5B66\u4E60\u795E\u9F99', this.getPetLevel() === 6)
+        this.petStagePill('\u86CB', this.getMoStageName() === '\u86CB')
+        this.petStagePill('\u7834\u58F3', this.getMoStageName() === '\u7834\u58F3')
+        this.petStagePill('\u5E7C\u5D3D', this.getMoStageName() === '\u5E7C\u5D3D')
+        this.petStagePill('\u6210\u957F\u671F', this.getMoStageName() === '\u6210\u957F\u671F')
+        this.petStagePill('\u5B66\u4E60\u4F19\u4F34', this.getMoStageName() === '\u5B66\u4E60\u4F19\u4F34')
       }
     }
     .width(Constant.PERCENT_FULL)
@@ -3065,6 +3857,9 @@ struct ToDoList {
   taskListPanel() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.taskHeroCard()
+      if (this.pendingTransferKind.length > 0) {
+        this.receivedFreeFlowCard()
+      }
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         this.taskSummaryPill('\u603B\u4EFB\u52A1', `${this.getTotalCount()}`, UI_COLORS.FOCUS_BLUE)
         this.taskSummaryPill('\u5DF2\u5B8C\u6210', `${this.getCompletedCount()}`, UI_COLORS.MINT)
@@ -3105,7 +3900,7 @@ struct ToDoList {
             ToDoListItem({
               toDoItem: toDoItem,
               onToggleComplete: (itemKey: string) => {
-                this.toggleTaskCompleteByKey(itemKey);
+                this.completeTaskByKey(itemKey);
               },
               deliverTodo: (item: ToDo) => {
                 this.showDeliveryPicker(item);
@@ -3185,19 +3980,14 @@ struct ToDoList {
   @Builder
   taskEmptyState() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\uD83C\uDF31')
-        .fontSize(42)
-      Text(this.getTotalCount() === 0 ? '\u4ECA\u5929\u8FD8\u6CA1\u6709\u5B89\u6392\u4EFB\u52A1\u54E6' :
-        '\u6CA1\u6709\u5339\u914D\u7684\u5F85\u529E')
-        .fontSize($r('sys.float.ohos_id_text_size_body1'))
-        .fontColor(UI_COLORS.TEXT_PRIMARY)
-      Text('\u5148\u5B8C\u6210\u4E00\u4E2A\u5C0F\u76EE\u6807\u5427 \u2728')
-        .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(UI_COLORS.TEXT_SECONDARY)
+      this.emptyPanel('\u25CC',
+        this.getTotalCount() === 0 ? '\u8FD8\u6CA1\u6709\u5B89\u6392\u4EFB\u52A1' : '\u6CA1\u6709\u5339\u914D\u7684\u5F85\u529E',
+        this.getTotalCount() === 0 ? '\u70B9\u51FB + \u65B0\u589E\u4E00\u4E2A\u5C0F\u76EE\u6807\uFF0C\u4ECE\u4E00\u4EF6\u4E8B\u5F00\u59CB\u3002' :
+          '\u6362\u4E2A\u5173\u952E\u8BCD\uFF0C\u6216\u56DE\u5230\u5168\u90E8\u4EFB\u52A1\u67E5\u770B\u3002')
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
-    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .borderRadius(24)
     .backgroundColor(Color.White)
   }
 
@@ -3250,7 +4040,35 @@ struct ToDoList {
 
   @Builder
   pageContainer() {
-    if (this.currentTab === 3) {
+    if (this.isAddingTodo) {
+      AddOrEditTodoForm({
+        todoItem: this.addingTodoDraft,
+        formMode: 'add',
+        onSaveTodo: (todoItem: ToDo, name: string, focusMinutes: number, priority: number, deadlineOffset: number,
+          category: string, repeatType: string, taskType: string, cardThemeIndex: number) => {
+          this.saveNewTodoFromForm(todoItem, name, focusMinutes, priority, deadlineOffset, category, repeatType,
+            taskType, cardThemeIndex);
+        },
+        onCancelEdit: () => {
+          this.closeTodoEditor();
+        }
+      })
+    } else if (this.editingTodoKey.length > 0 && this.getEditingTodo() !== null) {
+      ForEach(this.toDoData.filter((item: ToDo) => item.key === this.editingTodoKey), (item: ToDo) => {
+        AddOrEditTodoForm({
+          todoItem: item,
+          formMode: 'edit',
+          onSaveTodo: (todoItem: ToDo, name: string, focusMinutes: number, priority: number, deadlineOffset: number,
+            category: string, repeatType: string, taskType: string, cardThemeIndex: number) => {
+            this.saveTodoFromEditor(todoItem, name, focusMinutes, priority, deadlineOffset, category, repeatType,
+              taskType, cardThemeIndex);
+          },
+          onCancelEdit: () => {
+            this.closeTodoEditor();
+          }
+        })
+      }, (item: ToDo) => item.key)
+    } else if (this.currentTab === 3) {
       this.focusPage()
     } else if (this.currentTab === 1) {
       Column() {
@@ -3264,6 +4082,9 @@ struct ToDoList {
     } else {
       Scroll() {
         Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          if (this.pendingTransferKind.length > 0) {
+            this.receivedFreeFlowCard()
+          }
           if (this.currentTab === 0) {
             this.homePage()
           } else if (this.currentTab === 2) {
@@ -3295,15 +4116,396 @@ struct ToDoList {
 
   @Builder
   homePage() {
-    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      this.welcomeCard()
-      this.todayFocusOverviewCard()
-      if (this.focusTaskKey.length > 0) {
-        this.continueFocusCard()
+    if (this.isWideScreen) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          if (this.focusTaskKey.length > 0) {
+            this.continueFocusCard()
+          }
+          if (this.actionMenuTodoKey.length > 0 && this.getActionMenuTodo() !== undefined) {
+            this.todoActionPanel(this.getActionMenuTodo() as ToDo)
+          }
+          this.homeTodoListCard()
+        }
+        .layoutWeight(58)
+        .constraintSize({ maxWidth: 760 })
+        .alignSelf(ItemAlign.Start)
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.homeTabletOverviewPanel()
+        }
+        .layoutWeight(42)
+        .constraintSize({ maxWidth: 430 })
+        .alignSelf(ItemAlign.Start)
       }
+      .width(Constant.PERCENT_FULL)
+      .alignItems(VerticalAlign.Top)
+    } else {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        if (this.focusTaskKey.length > 0) {
+          this.continueFocusCard()
+        }
+        if (this.actionMenuTodoKey.length > 0 && this.getActionMenuTodo() !== undefined) {
+          this.todoActionPanel(this.getActionMenuTodo() as ToDo)
+        }
+        this.homeTodoListCard()
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+  }
+
+  @Builder
+  homeTabletOverviewPanel() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.homeTabletTodayCard()
+      this.countdownCard()
       this.petMiniCard()
+      this.homeTabletQuickAddCard()
     }
     .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  homeTabletTodayCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u4ECA\u65E5\u6982\u89C8')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.homeTabletMetric('\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
+        this.homeTabletMetric('\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.homeTabletMetric('\u5B8C\u6210', `${this.todayCompletedCount}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
+        this.homeTabletMetric('\u5269\u4F59', `${this.getUncompletedCount()}`, UI_COLORS.PET_PURPLE, UI_COLORS.PINK_LIGHT)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+    .shadow({
+      radius: 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  @Builder
+  homeTabletMetric(labelText: string, valueText: string, valueColor: ResourceColor, bgColor: ResourceColor) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(valueText)
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(valueColor)
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+      Text(labelText)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_MEDIUM)
+    .backgroundColor(bgColor)
+  }
+
+  @Builder
+  homeTabletQuickAddCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u5FEB\u6377\u65B0\u589E')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.demoTaskNames, (taskName: string) => {
+          this.demoTaskButton(taskName)
+        }, (taskName: string) => taskName)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#FFFBF4')
+    .shadow({
+      radius: 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  getHomeTodos(): ToDo[] {
+    let allItems = this.getAllTodos();
+    allItems.sort((firstItem: ToDo, secondItem: ToDo) => {
+      if (firstItem.isCompleted !== secondItem.isCompleted) {
+        return Number(firstItem.isCompleted) - Number(secondItem.isCompleted);
+      }
+      if (firstItem.deadline > 0 && secondItem.deadline > 0) {
+        return firstItem.deadline - secondItem.deadline;
+      }
+      if (firstItem.deadline > 0) {
+        return -1;
+      }
+      if (secondItem.deadline > 0) {
+        return 1;
+      }
+      return secondItem.createdAt - firstItem.createdAt;
+    });
+    return allItems;
+  }
+
+  @Builder
+  homeTodoListCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u4EE3\u529E')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+      }
+      .width(Constant.PERCENT_FULL)
+      if (this.getHomeTodos().length === 0) {
+        this.homeTodoEmptyState()
+      }
+      ForEach(this.getHomeTodos(), (item: ToDo) => {
+        TodoCard({
+          todoItem: item,
+          deadlineText: item.deadline > 0 ? this.getDeadlineText(item.deadline) : '\u65E0\u622A\u6B62\u65E5\u671F',
+          onStart: (todoItem: ToDo) => {
+            this.startFocus(todoItem, todoItem.plannedFocusMinutes);
+          },
+          onToggleComplete: (todoItem: ToDo) => {
+            this.completeTaskByKey(todoItem.key);
+          },
+          onEdit: (todoItem: ToDo) => {
+            this.showTodoActionMenu(todoItem);
+          },
+          onDelete: (todoItem: ToDo) => {
+            this.showTodoActionMenu(todoItem);
+          }
+        })
+      }, (item: ToDo) => `${item.key}_${item.isCompleted}`)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(24)
+    .backgroundColor('#FFFEFC')
+    .shadow({
+      radius: 16,
+      color: '#10000000',
+      offsetX: 0,
+      offsetY: 6
+    })
+  }
+
+  @Builder
+  todoActionPanel(item: ToDo) {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text('\u4EFB\u52A1\u64CD\u4F5C')
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(UI_COLORS.TEXT_PRIMARY)
+            .fontWeight(FontWeight.Bold)
+          Text(item.name)
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Text('\u00D7')
+          .fontSize(24)
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .onClick(() => {
+            this.closeTodoActionMenu();
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.todoSoftActionButton('\u270E', '\u7F16\u8F91', UI_COLORS.BLUE_LIGHT, UI_COLORS.FOCUS_BLUE, () => {
+          this.closeTodoActionMenu();
+          this.openTodoEditor(item);
+        })
+        this.todoSoftActionButton('\u2191', '\u7F6E\u9876', UI_COLORS.CREAM_WHITE, UI_COLORS.ORANGE, () => {
+          this.pinTodoItem(item);
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.todoSoftActionButton('\u2713', item.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210',
+          UI_COLORS.MINT_LIGHT, UI_COLORS.MINT, () => {
+          this.closeTodoActionMenu();
+          this.completeTaskByKey(item.key);
+        })
+        this.todoSoftActionButton('\u232B', '\u5220\u9664', '#FFF1F0', '#D94838', () => {
+          this.closeTodoActionMenu();
+          this.confirmDeleteItem(item);
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.todoSoftActionButton('\u21C4', '\u6D41\u8F6C\u5230\u5176\u4ED6\u8BBE\u5907',
+          UI_COLORS.BLUE_LIGHT, UI_COLORS.FOCUS_BLUE, () => {
+          this.closeTodoActionMenu();
+          this.showDeliveryPicker(item);
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#F8FFFFFF')
+    .shadow({ radius: 18, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 8 })
+  }
+
+  @Builder
+  todoSoftActionButton(iconText: string, labelText: string, backgroundColor: ResourceColor,
+    textColor: ResourceColor, action: () => void) {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(iconText)
+        .fontSize(20)
+        .fontColor(textColor)
+      Text(labelText)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(textColor)
+        .fontWeight(FontWeight.Medium)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .height(58)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(backgroundColor)
+    .onClick(action)
+  }
+
+  @Builder
+  homeTodoEmptyState() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text('\u25CC')
+        .fontSize(34)
+        .fontColor(UI_COLORS.TEXT_WEAK)
+      Text('\u4ECA\u5929\u8FD8\u5F88\u6E05\u723D')
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+      Text('\u9009\u4E00\u4E2A\u6F14\u793A\u4EFB\u52A1\uFF0C\u9A6C\u4E0A\u770B\u5230\u5B8C\u6574\u6D41\u7A0B\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.demoTaskNames, (taskName: string) => {
+          this.demoTaskButton(taskName)
+        }, (taskName: string) => taskName)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(24)
+    .backgroundColor('#FFFBF4')
+  }
+
+  @Builder
+  demoTaskButton(taskName: string) {
+    Text(taskName)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(Color.White)
+      .fontWeight(FontWeight.Medium)
+      .padding({
+        left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+        right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+        top: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+        bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
+      })
+      .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor(this.getThemeColor())
+      .onClick(() => {
+        this.createDemoTodo(taskName);
+      })
+  }
+
+  @Builder
+  homeTodoCard(item: ToDo) {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text(item.name)
+            .fontSize($r('sys.float.ohos_id_text_size_body1'))
+            .fontColor(item.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.TEXT_PRIMARY)
+            .fontWeight(FontWeight.Bold)
+            .maxLines(2)
+            .width(Constant.PERCENT_FULL)
+          Text(`${item.focusDurationMinutes}\u5206\u949F\u4E13\u6CE8 \u00B7 ${item.deadline > 0 ? this.getDeadlineText(item.deadline) : '\u65E0\u622A\u6B62\u65E5\u671F'}`)
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .maxLines(1)
+            .width(Constant.PERCENT_FULL)
+          Text(`\u5DF2\u4E13\u6CE8 ${item.focusCount}\u6B21 \u00B7 ${this.getPriorityName(item.priority)}`)
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(this.getDeadlineStatusColor(item.deadline, item.isCompleted))
+            .maxLines(1)
+            .width(Constant.PERCENT_FULL)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Text(item.isCompleted ? '\u5DF2\u5B8C\u6210' : '\u5F00\u59CB')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .width(64)
+          .height(36)
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(item.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.FOCUS_BLUE)
+          .onClick(() => {
+            if (!item.isCompleted) {
+              this.startFocus(item, this.selectedFocusMinutes);
+            }
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        CommonPill({ pillLabel: item.isCompleted ? '\u53D6\u6D88\u5B8C\u6210' : '\u5B8C\u6210', pillTextColor: Color.White, pillBgColor: item.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.MINT })
+          .onClick(() => {
+            this.completeTaskByKey(item.key);
+          })
+        CommonPill({ pillLabel: '\u8BE6\u60C5', pillTextColor: UI_COLORS.FOCUS_BLUE, pillBgColor: UI_COLORS.BLUE_LIGHT })
+          .onClick(() => {
+            this.showTodoDetail(item);
+          })
+        CommonPill({ pillLabel: '\u8C03\u6574', pillTextColor: UI_COLORS.PET_PURPLE, pillBgColor: UI_COLORS.PINK_LIGHT })
+          .onClick(() => {
+            this.showPriorityPicker(item);
+          })
+        CommonPill({ pillLabel: '\u5220\u9664', pillTextColor: '#D94838', pillBgColor: '#FFF1F0' })
+          .onClick(() => {
+            this.confirmDeleteItem(item);
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(item.isCompleted ? '#F6F6F6' : '#FFF8EE')
+    .onClick(() => {
+      this.showTodoDetail(item);
+    })
   }
 
   @Builder
@@ -3315,7 +4517,7 @@ struct ToDoList {
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
             .fontColor(UI_COLORS.TEXT_SECONDARY)
             .width(Constant.PERCENT_FULL)
-          Text('\u4ECA\u5929\u4E5F\u7EE7\u7EED\u52AA\u529B\u5427')
+          Text('\u4ECA\u5929\u4E5F\u6162\u6162\u5411\u524D\u5427')
             .fontSize($r('sys.float.ohos_id_text_size_headline7'))
             .fontColor(UI_COLORS.TEXT_PRIMARY)
             .fontWeight(FontWeight.Bold)
@@ -3327,8 +4529,7 @@ struct ToDoList {
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
-        Text(this.getPetEmoji())
-          .fontSize(48)
+        this.moOutfitAvatar(66)
       }
       .width(Constant.PERCENT_FULL)
     }
@@ -3512,28 +4713,44 @@ struct ToDoList {
 
   @Builder
   calendarPage() {
-    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      this.calendarHeroCard()
-      this.calendarDeadlineOverview()
-      this.countdownCard()
-      this.calendarGroupCard('\uD83D\uDEA8 \u5DF2\u903E\u671F', this.getOverdueTodos())
-      this.calendarGroupCard('\uD83C\uDF24 \u4ECA\u5929', this.getTodosByDeadlineRange(0, 0))
-      this.calendarGroupCard('\uD83C\uDF05 \u660E\u5929', this.getTodosByDeadlineRange(1, 1))
-      this.calendarGroupCard('\uD83D\uDCC6 \u672C\u5468', this.getTodosByDeadlineRange(2, 7))
-      this.calendarGroupCard('\uD83C\uDF08 \u4EE5\u540E', this.getFutureTodosAfterWeek())
+    if (this.isWideScreen) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.calendarMonthGridCard()
+          this.calendarDeadlineOverview()
+        }
+        .layoutWeight(48)
+        .constraintSize({ maxWidth: 560 })
+        .alignSelf(ItemAlign.Start)
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.selectedCalendarTasksCard()
+          this.calendarGroupCard('\u6700\u8FD1 deadline', this.getUpcomingTodos())
+          this.countdownCard()
+        }
+        .layoutWeight(52)
+        .constraintSize({ maxWidth: 620 })
+        .alignSelf(ItemAlign.Start)
+      }
+      .width(Constant.PERCENT_FULL)
+      .alignItems(VerticalAlign.Top)
+    } else {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.calendarMonthGridCard()
+        this.selectedCalendarTasksCard()
+      }
+      .width(Constant.PERCENT_FULL)
     }
-    .width(Constant.PERCENT_FULL)
   }
 
   @Builder
   calendarHeroCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\uD83D\uDCC5 \u65E5\u5386\u89C6\u56FE')
+      Text('\uD83D\uDCC5 \u5B66\u4E60\u65E5\u5386')
         .fontSize($r('sys.float.ohos_id_text_size_headline7'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
-      Text('\u91CD\u8981\u4EFB\u52A1\u548C\u622A\u6B62\u65E5\u671F\u4E00\u773C\u770B\u6E05')
+      Text('\u770B\u770B\u4EE3\u529E\u90FD\u5B89\u6392\u5728\u54EA\u4E9B\u65E5\u5B50')
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -3541,7 +4758,7 @@ struct ToDoList {
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(UI_COLORS.CREAM_WHITE)
+    .backgroundColor('#F6F1FF')
     .shadow({
       radius: 12,
       color: UI_COLORS.CARD_SHADOW,
@@ -3579,162 +4796,429 @@ struct ToDoList {
   @Builder
   immersiveFocusClockPage() {
     Stack() {
-      Column() {
-        Row() {
-          Row()
-            .width(190)
-            .height(190)
-            .borderRadius(95)
-            .backgroundColor('#33FFB7C5')
-          Blank()
-        }
-        .width(Constant.PERCENT_FULL)
-        Row() {
-          Blank()
-          Row()
-            .width(240)
-            .height(240)
-            .borderRadius(120)
-            .backgroundColor('#224D7CFE')
-        }
-        .width(Constant.PERCENT_FULL)
-        Row() {
-          Row()
-            .width(130)
-            .height(130)
-            .borderRadius(65)
-            .backgroundColor('#22FFCF7A')
-          Blank()
-          Row()
-            .width(92)
-            .height(92)
-            .borderRadius(46)
-            .backgroundColor('#229B7CFF')
-        }
-        .width(Constant.PERCENT_FULL)
-        Blank()
-      }
-      .width(Constant.PERCENT_FULL)
-      .height(Constant.PERCENT_FULL)
-      .padding(STYLE_CONFIG.UI_CARD_PADDING)
-      .backgroundColor(this.getFocusRoomBackgroundColor())
-
-      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        Blank()
-
-        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          Text('\u5F53\u524D\u4EFB\u52A1')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor('#C9D4F7')
-          Text(this.focusTaskKey.length > 0 ? this.getFocusTaskName() : '\u8BF7\u4ECE\u4EFB\u52A1\u9875\u9009\u62E9\u4E13\u6CE8\u4EFB\u52A1')
-            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-            .fontColor(Color.White)
-            .fontWeight(FontWeight.Bold)
-            .textAlign(TextAlign.Center)
-            .maxLines(2)
-        }
-        .width(Constant.PERCENT_FULL)
-        .padding(STYLE_CONFIG.UI_CARD_PADDING)
-        .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-        .backgroundColor('#22FFFFFF')
-
-        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-          Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-            Text(this.focusTaskKey.length > 0 ? this.formatFocusTime() : `${this.selectedFocusMinutes}:00`)
-              .fontSize(78)
-              .fontColor(Color.White)
-              .fontWeight(FontWeight.Bold)
-              .textAlign(TextAlign.Center)
-            Text(this.getFocusStateText())
-              .fontSize($r('sys.float.ohos_id_text_size_body1'))
-              .fontColor('#EAF0FF')
-              .textAlign(TextAlign.Center)
-          }
-          .width(250)
-          .height(250)
-          .justifyContent(FlexAlign.Center)
-          .borderRadius(125)
-          .border({
-            width: 2,
-            color: '#55FFFFFF'
-          })
-          .backgroundColor('#20FFFFFF')
-          .shadow({
-            radius: 28,
-            color: '#55000000',
-            offsetX: 0,
-            offsetY: 12
-          })
-          Row() {
-            Row()
-              .height(8)
-              .width(`${this.focusTaskKey.length > 0 ? this.getFocusProgress() : 0}%`)
-              .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-              .backgroundColor(this.getFocusRoomAccentColor())
-          }
-          .width('78%')
-          .height(8)
-          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-          .backgroundColor('#30FFFFFF')
-        }
-        .width(Constant.PERCENT_FULL)
-
-        Text(this.getTodayQuote())
-          .fontSize($r('sys.float.ohos_id_text_size_body1'))
-          .fontColor('#DDE7FF')
-          .textAlign(TextAlign.Center)
-          .width(Constant.PERCENT_FULL)
-          .padding({
-            left: STYLE_CONFIG.UI_CARD_PADDING,
-            right: STYLE_CONFIG.UI_CARD_PADDING
-          })
-
-        if (this.focusTaskKey.length === 0) {
-          Text('\u8FD4\u56DE\u4EFB\u52A1\u9875\u9009\u62E9\u4E00\u4E2A\u4EFB\u52A1\u5F00\u59CB\u4E13\u6CE8')
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(Color.White)
-            .textAlign(TextAlign.Center)
-            .width(Constant.PERCENT_FULL)
-            .height(48)
-            .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-            .backgroundColor('#28FFFFFF')
-            .onClick(() => {
-              this.exitFocusRoom();
-            })
-        } else {
-          Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-            if (this.isFocusFinished || this.focusRemainingSeconds === 0) {
-              this.focusRoomPrimaryAction('\u5B8C\u6210\u4E13\u6CE8', this.getFocusRoomAccentColor(), () => {
-                this.completeFocus();
-              })
-            } else {
-              this.focusRoomPrimaryAction(this.isFocusRunning ? '\u6682\u505C\u4E13\u6CE8' : '\u7EE7\u7EED\u4E13\u6CE8',
-                '#32FFFFFF', () => {
-                this.pauseOrResumeFocus();
-              })
-              this.focusRoomPrimaryAction('\u63D0\u524D\u7ED3\u675F', UI_COLORS.ORANGE, () => {
-                this.cancelFocus();
-              })
-            }
-          }
-          .width(Constant.PERCENT_FULL)
-        }
-
-        Blank()
-      }
-      .width(Constant.PERCENT_FULL)
-      .height(Constant.PERCENT_FULL)
-      .padding({
-        left: STYLE_CONFIG.UI_CARD_PADDING,
-        right: STYLE_CONFIG.UI_CARD_PADDING,
-        top: STYLE_CONFIG.UI_CARD_PADDING,
-        bottom: STYLE_CONFIG.UI_CARD_PADDING
-      })
+      this.focusRoomAtmosphereLayer()
+      this.focusRoomContentLayer()
     }
     .width(Constant.PERCENT_FULL)
     .height(Constant.PERCENT_FULL)
     .backgroundColor(this.getFocusRoomBackgroundColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  @Builder
+  focusRoomAtmosphereLayer() {
+    Stack() {
+      Column()
+      .width(Constant.PERCENT_FULL)
+      .height(Constant.PERCENT_FULL)
+      .backgroundColor(this.getFocusRoomBackgroundColor())
+
+      Row()
+        .width(260)
+        .height(260)
+        .borderRadius(130)
+        .backgroundColor('#1F6EA8FF')
+        .position({ x: -76, y: 92 })
+      Row()
+        .width(220)
+        .height(220)
+        .borderRadius(110)
+        .backgroundColor('#22BBD7FF')
+        .position({ x: 210, y: 210 })
+      Row()
+        .width(150)
+        .height(150)
+        .borderRadius(75)
+        .backgroundColor('#24FFD8A8')
+        .position({ x: 42, y: 520 })
+
+      this.focusRoomStar(32, 86, 3)
+      this.focusRoomStar(88, 142, 2)
+      this.focusRoomStar(278, 92, 2)
+      this.focusRoomStar(318, 176, 3)
+      this.focusRoomStar(46, 272, 2)
+      this.focusRoomStar(238, 328, 2)
+      this.focusRoomStar(330, 438, 2)
+    }
+    .width(Constant.PERCENT_FULL)
+    .height(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  focusRoomStar(left: number, top: number, size: number) {
+    Row()
+      .width(size)
+      .height(size)
+      .borderRadius(size)
+      .backgroundColor('#CCFFFFFF')
+      .position({ x: left, y: top })
+  }
+
+  @Builder
+  focusRoomContentLayer() {
+    Column() {
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(this.currentFocusQuote.length > 0 ? this.currentFocusQuote : this.getTodayQuote())
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor('#F2FFFFFF')
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .maxLines(2)
+          .width(Constant.PERCENT_FULL)
+        Text(this.focusTaskKey.length > 0 ? this.getFocusTaskName() : '\u51C6\u5907\u8FDB\u5165\u4E13\u6CE8')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor('#AFFFFFFF')
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+          .width(Constant.PERCENT_FULL)
+      }
+      .width(Constant.PERCENT_FULL)
+      .padding({ left: 18, right: 18, top: 12, bottom: 12 })
+      .borderRadius(24)
+      .backgroundColor('#16FFFFFF')
+      if (this.focusTaskKey.length > 0 && !this.isFocusRunning && !this.isFocusFinished) {
+        Text('\u5DF2\u6682\u505C')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor('#B8FFFFFF')
+          .textAlign(TextAlign.Center)
+          .width(Constant.PERCENT_FULL)
+          .margin({ top: STYLE_CONFIG.ICON_GUTTER })
+      }
+      if (this.isFocusThemePanelVisible) {
+        this.focusRoomThemePanel()
+      }
+      if (this.isFocusNoisePanelVisible) {
+        this.focusRoomNoisePanel()
+      }
+
+      Blank()
+
+      this.focusRoomTimerCore()
+
+      this.focusRoomBuddyHint()
+
+      Blank()
+
+      this.focusRoomBottomActions()
+    }
+    .width(Constant.PERCENT_FULL)
+    .height(Constant.PERCENT_FULL)
+    .padding({
+      left: STYLE_CONFIG.UI_CARD_PADDING,
+      right: STYLE_CONFIG.UI_CARD_PADDING,
+      top: STYLE_CONFIG.UI_CARD_PADDING * 2,
+      bottom: STYLE_CONFIG.UI_CARD_PADDING * 2
+    })
+  }
+
+  @Builder
+  focusRoomTimerCore() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      if (this.focusClockStyleIndex === 1) {
+        this.focusRoomMinimalClock()
+      } else if (this.focusClockStyleIndex === 2) {
+        this.focusRoomCardClock()
+      } else {
+        this.focusRoomRingClock()
+      }
+
+      Text(this.isFocusRunning ? '\u4E13\u6CE8\u4E2D' : (this.isFocusFinished ? '\u4E13\u6CE8\u5B8C\u6210' : '\u4F11\u606F\u4E00\u4E0B'))
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#AFFFFFFF')
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+    }
+    .width(Constant.PERCENT_FULL)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  focusRoomRingClock() {
+    Stack() {
+      Row()
+        .width(320)
+        .height(320)
+        .borderRadius(160)
+        .border({ width: 2, color: '#28FFFFFF' })
+      this.focusRoomClockText()
+      Text(`${this.getFocusProgress()}%`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.getFocusRoomAccentColor())
+        .textAlign(TextAlign.Center)
+        .position({ x: 136, y: 226 })
+    }
+    .width(320)
+    .height(320)
+  }
+
+  @Builder
+  focusRoomMinimalClock() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.focusRoomClockText()
+      Text(`${this.getFocusProgress()}%`)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(this.getFocusRoomAccentColor())
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding({ top: 54, bottom: 54 })
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  focusRoomCardClock() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.focusRoomClockText()
+      Text(`${this.getFocusProgress()}%`)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(this.getFocusRoomAccentColor())
+    }
+    .width(304)
+    .padding({ top: 58, bottom: 58 })
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#24FFFFFF')
+    .shadow({ radius: 24, color: '#44000000', offsetX: 0, offsetY: 10 })
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  @Builder
+  focusRoomClockText() {
+    Text(this.focusTaskKey.length > 0 ? this.formatFocusTime() : `${this.selectedFocusMinutes}:00`)
+      .fontSize(86)
+      .fontColor(Color.White)
+      .fontWeight(FontWeight.Bold)
+      .textAlign(TextAlign.Center)
+  }
+
+  @Builder
+  focusRoomBuddyHint() {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      this.moOutfitAvatar(34)
+      Text('\u5C0Fmo\u966A\u4F60')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor('#B8FFFFFF')
+    }
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+    .backgroundColor('#12FFFFFF')
+  }
+
+  @Builder
+  focusRoomBottomActions() {
+    if (this.focusTaskKey.length === 0) {
+      Text('\u2190 \u56DE\u5230\u4EFB\u52A1\u9875')
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .height(52)
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor('#28FFFFFF')
+        .onClick(() => {
+          this.exitFocusRoom();
+        })
+    } else if (this.isFocusFinished || this.focusRemainingSeconds === 0) {
+      this.focusRoomPrimaryAction('\u2713 \u5B8C\u6210\u4E13\u6CE8', this.getFocusRoomAccentColor(), () => {
+        this.completeFocus();
+      })
+    } else {
+      Row() {
+        this.focusRoomSideControl(true, () => {
+          this.isFocusNoisePanelVisible = false;
+          this.isFocusThemePanelVisible = !this.isFocusThemePanelVisible;
+        })
+        Blank()
+        this.focusRoomTransferControl(() => {
+          this.showFocusTransferDevicePicker();
+        })
+        Blank()
+        Row({ space: 56 }) {
+          this.focusRoomPauseResumeControl(() => {
+            this.pauseOrResumeFocus();
+          })
+          this.focusRoomStopControl(() => {
+            this.cancelFocus();
+          })
+        }
+        Blank()
+        this.focusRoomSideControl(false, () => {
+          this.isFocusThemePanelVisible = false;
+          this.isFocusNoisePanelVisible = !this.isFocusNoisePanelVisible;
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  @Builder
+  focusRoomTransferControl(action: () => void) {
+    Text('\u6D41\u8F6C')
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor('#DDE7FF')
+      .fontWeight(FontWeight.Medium)
+      .textAlign(TextAlign.Center)
+      .width(54)
+      .height(34)
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor('#18FFFFFF')
+      .onClick(action)
+  }
+
+  @Builder
+  focusRoomPauseResumeControl(action: () => void) {
+    Stack() {
+      if (this.isFocusRunning) {
+        this.focusRoomPauseGlyph()
+      } else {
+        this.focusRoomPlayGlyph()
+      }
+    }
+    .width(54)
+    .height(54)
+    .borderRadius(27)
+    .backgroundColor('#00FFFFFF')
+    .onClick(action)
+  }
+
+  @Builder
+  focusRoomStopControl(action: () => void) {
+    Stack() {
+      Row()
+        .width(20)
+        .height(20)
+        .borderRadius(4)
+        .backgroundColor('#EFA5A5')
+    }
+    .width(54)
+    .height(54)
+    .borderRadius(27)
+    .backgroundColor('#00FFFFFF')
+    .onClick(action)
+  }
+
+  @Builder
+  focusRoomPauseGlyph() {
+    Row({ space: 6 }) {
+      Row()
+        .width(4)
+        .height(23)
+        .borderRadius(2)
+        .backgroundColor('#F2FFFFFF')
+      Row()
+        .width(4)
+        .height(23)
+        .borderRadius(2)
+        .backgroundColor('#F2FFFFFF')
+    }
+    .width(26)
+    .height(26)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  focusRoomPlayGlyph() {
+    Column({ space: 0 }) {
+      Row().width(4).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(8).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(12).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(16).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(20).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(16).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(12).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(8).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+      Row().width(4).height(2).borderRadius(1).backgroundColor('#F2FFFFFF')
+    }
+    .width(24)
+    .height(24)
+    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  focusRoomSideControl(isThemeControl: boolean, action: () => void) {
+    Stack() {
+      if (isThemeControl) {
+        Row({ space: 3 }) {
+          Row().width(5).height(5).borderRadius(3).backgroundColor('#88FFFFFF')
+          Row().width(5).height(5).borderRadius(3).backgroundColor(this.getFocusRoomAccentColor())
+          Row().width(5).height(5).borderRadius(3).backgroundColor('#66FFFFFF')
+        }
+      } else {
+        Row({ space: 4 }) {
+          Row().width(3).height(15).borderRadius(2).backgroundColor('#88FFFFFF')
+          Row().width(3).height(21).borderRadius(2).backgroundColor('#88FFFFFF')
+          Row().width(3).height(11).borderRadius(2).backgroundColor('#88FFFFFF')
+        }
+        .alignItems(VerticalAlign.Center)
+      }
+    }
+    .width(40)
+    .height(40)
+    .borderRadius(20)
+    .backgroundColor('#10FFFFFF')
+    .opacity(0.72)
+      .onClick(action)
+  }
+
+  @Builder
+  focusRoomThemePanel() {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      ForEach(this.focusRoomNames, (themeName: string, index: number) => {
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Row()
+            .width(index === this.focusThemeIndex ? 22 : 18)
+            .height(index === this.focusThemeIndex ? 22 : 18)
+            .borderRadius(11)
+            .backgroundColor(this.focusRoomAccentColors[index])
+            .border({
+              width: index === this.focusThemeIndex ? 2 : 0,
+              color: Color.White
+            })
+          Text(themeName)
+            .fontSize(11)
+            .fontColor(index === this.focusThemeIndex ? Color.White : '#C9D4F7')
+            .maxLines(1)
+        }
+        .layoutWeight(1)
+        .height(54)
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.focusThemeIndex = index;
+          this.isFocusThemePanelVisible = false;
+          this.saveAppState();
+        })
+      }, (themeName: string) => themeName)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#24FFFFFF')
+  }
+
+  @Builder
+  focusRoomNoisePanel() {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      ForEach(this.focusNoiseNames, (noiseName: string, index: number) => {
+        Text(noiseName)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(index === this.focusNoiseIndex ? Color.White : '#C9D4F7')
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .height(38)
+          .onClick(() => {
+            this.focusNoiseIndex = index;
+            this.isFocusNoisePanelVisible = false;
+          })
+      }, (noiseName: string) => noiseName)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.OPERATION_BUTTON_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#18FFFFFF')
   }
 
   @Builder
@@ -3748,6 +5232,7 @@ struct ToDoList {
       .height(52)
       .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
       .backgroundColor(backgroundColor)
+      .shadow({ radius: 12, color: '#22000000', offsetX: 0, offsetY: 4 })
       .onClick(action)
   }
 
@@ -3828,6 +5313,7 @@ struct ToDoList {
       .fontColor(index === this.focusThemeIndex ? this.getFocusRoomAccentColor() : '#C9D4F7')
       .onClick(() => {
         this.focusThemeIndex = index;
+        this.saveAppState();
       })
   }
 
@@ -3862,8 +5348,7 @@ struct ToDoList {
   @Builder
   focusRoomBuddyCard() {
     Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text(this.getStudyBuddyName().substring(0, 2))
-        .fontSize(34)
+      this.moOutfitAvatar(58)
       Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
         Text(this.getStudyBuddyName())
           .fontSize($r('sys.float.ohos_id_text_size_body1'))
@@ -3897,14 +5382,14 @@ struct ToDoList {
         }, (minuteValue: number) => `${minuteValue}`)
       }
       .width(Constant.PERCENT_FULL)
-      if (this.getAllTodos().filter((item: ToDo) => !item.isCompleted).length === 0) {
+      if (this.getAvailableFocusTodos().length === 0) {
         Text('\u6682\u65E0\u53EF\u4E13\u6CE8\u4EFB\u52A1\uFF0C\u5148\u53BB\u4EFB\u52A1\u9875\u6DFB\u52A0\u4E00\u4E2A\u5C0F\u76EE\u6807')
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor('#DDE7FF')
           .textAlign(TextAlign.Center)
           .width(Constant.PERCENT_FULL)
       }
-      ForEach(this.getAllTodos().filter((item: ToDo) => !item.isCompleted).slice(0, 3), (item: ToDo) => {
+      ForEach(this.getAvailableFocusTodos().slice(0, 3), (item: ToDo) => {
         this.focusRoomTaskStartItem(item)
       }, (item: ToDo) => item.key)
     }
@@ -4121,13 +5606,13 @@ struct ToDoList {
   quickFocusTasks() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
       this.sectionTitle('\u9009\u62E9\u4E13\u6CE8\u4EFB\u52A1')
-      if (this.getAllTodos().filter((item: ToDo) => !item.isCompleted).length === 0) {
+      if (this.getAvailableFocusTodos().length === 0) {
         Text('\u6682\u65E0\u53EF\u4E13\u6CE8\u7684\u4EFB\u52A1\uFF0C\u5148\u6DFB\u52A0\u4E00\u4E2A\u5C0F\u76EE\u6807\u5427')
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(UI_COLORS.TEXT_SECONDARY)
           .width(Constant.PERCENT_FULL)
       }
-      ForEach(this.getAllTodos().filter((item: ToDo) => !item.isCompleted).slice(0, 4), (item: ToDo) => {
+      ForEach(this.getAvailableFocusTodos().slice(0, 4), (item: ToDo) => {
         Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
           Text('\u7B7E')
             .fontSize(18)
@@ -4179,61 +5664,225 @@ struct ToDoList {
 
   @Builder
   statisticsPage() {
-    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      this.statisticsHeroCard()
-      this.todayStudySummaryCard()
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('\uD83D\uDCDD', '\u4EFB\u52A1\u603B\u6570', `${this.getTotalCount()}`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
-        this.overviewMetricCard('\u2705', '\u5DF2\u5B8C\u6210', `${this.getCompletedCount()}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
+    if (this.isWideScreen) {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.statisticsTodayMetrics()
+        Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+            this.statisticsFocusTypeDonutCard()
+          }
+          .layoutWeight(48)
+          .constraintSize({ maxWidth: 560 })
+          .alignSelf(ItemAlign.Start)
+          Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+            this.statisticsCumulativeCard()
+            this.statisticsWeeklyTrendCard()
+            this.statisticsMonthlyTrendCard()
+            this.statisticsSummaryNoteCard()
+          }
+          .layoutWeight(52)
+          .constraintSize({ maxWidth: 620 })
+          .alignSelf(ItemAlign.Start)
+        }
+        .width(Constant.PERCENT_FULL)
+        .alignItems(VerticalAlign.Top)
       }
       .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('\uD83C\uDF31', '\u672A\u5B8C\u6210', `${this.getUncompletedCount()}`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
-        this.overviewMetricCard('\uD83D\uDCCA', '\u5B8C\u6210\u7387', `${this.getCompletionRate()}%`, UI_COLORS.PET_PURPLE, UI_COLORS.PINK_LIGHT)
+    } else {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.statisticsTodayMetrics()
+        this.statisticsCumulativeCard()
+        this.statisticsFocusTypeDonutCard()
       }
       .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('\uD83C\uDF45', '\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE, UI_COLORS.PINK_LIGHT)
-        this.overviewMetricCard('\u23F1', '\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
-      }
-      .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.overviewMetricCard('\uD83C\uDF1F', '\u5F53\u524D\u79EF\u5206', `${this.score}`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
-        this.overviewMetricCard('\uD83D\uDC3E', '\u5BA0\u7269\u6210\u957F', `${this.petExp}`, UI_COLORS.PET_PURPLE, UI_COLORS.PINK_LIGHT)
-      }
-      .width(Constant.PERCENT_FULL)
-      this.progressCard('\u4EFB\u52A1\u5B8C\u6210\u7387', this.getCompletionRate(), `${this.getCompletedCount()} / ${this.getTotalCount()}`)
-      this.progressCard('\u81EA\u5F8B\u76EE\u6807\u8FBE\u6210\u7387', this.getDailyGoalCompletionRate(), `${this.getActiveDailyGoalIndexes().length}\u9879\u76EE\u6807`)
-      this.progressCard('\u5BA0\u7269\u6210\u957F\u8FDB\u5EA6', this.getPetProgress(), `Lv.${this.getPetLevel()} ${this.getPetName()}`)
-      this.focusAnalysisCard()
-      this.achievementBadgeCard()
     }
-    .width(Constant.PERCENT_FULL)
+  }
+
+  getAvailableFocusTodos(): ToDo[] {
+    return this.getAllTodos().filter((item: ToDo) => !item.isCompleted && item.taskType === 'focus');
+  }
+
+  getStatisticsFeedback(): string {
+    if (this.todayFocusMinutes >= 60) {
+      return '\u4ECA\u5929\u8FDB\u5165\u4E86\u9AD8\u6548\u5B66\u4E60\u72B6\u6001\uFF0C\u8282\u594F\u5F88\u7A33\u3002';
+    }
+    if (this.todayPomodoroCount >= 2) {
+      return '\u8FDE\u7EED\u5B8C\u6210\u591A\u4E2A\u756A\u8304\uFF0C\u4ECA\u5929\u5F88\u7A33\u5B9A\u3002';
+    }
+    if (this.todayCompletedCount >= 3) {
+      return '\u4EFB\u52A1\u63A8\u8FDB\u5F88\u660E\u663E\uFF0C\u4ECA\u5929\u7684\u8FDB\u5EA6\u770B\u5F97\u89C1\u3002';
+    }
+    if (this.todayFocusMinutes > 0 || this.todayPomodoroCount > 0 || this.todayCompletedCount > 0) {
+      return '\u4ECA\u5929\u5DF2\u7ECF\u5F00\u59CB\u79EF\u7D2F\uFF0C\u7EE7\u7EED\u5F80\u524D\u4E00\u70B9\u70B9\u3002';
+    }
+    return '\u4ECE\u4E00\u4E2A\u756A\u8304\u5F00\u59CB\uFF0C\u4ECA\u5929\u4E5F\u4F1A\u6709\u8FDB\u6B65\u3002';
+  }
+
+  getWeeklyPreviewValue(index: number): number {
+    if (this.todayFocusMinutes === 0 && this.getTotalFocusMinutes() === 0) {
+      return [8, 12, 10, 16, 14, 18, 0][index];
+    }
+    let seed = Math.max(this.todayFocusMinutes, Math.round(this.getTotalFocusMinutes() / 7));
+    if (index === 6) {
+      return this.todayFocusMinutes;
+    }
+    return Math.max(5, Math.round(seed * (index + 2) / 8));
+  }
+
+  getTrendBarHeight(value: number): number {
+    if (value <= 0) {
+      return 8;
+    }
+    return Math.min(96, Math.max(18, value + 14));
+  }
+
+  getTimeDistributionPercent(index: number): number {
+    let total = Math.max(1, this.todayFocusMinutes + this.todayReadingMinutes + this.todayCompletedCount * 8);
+    if (index === 0) {
+      return Math.round(this.todayFocusMinutes * 100 / total);
+    }
+    if (index === 1) {
+      return Math.round(this.todayReadingMinutes * 100 / total);
+    }
+    return Math.max(0, 100 - this.getTimeDistributionPercent(0) - this.getTimeDistributionPercent(1));
+  }
+
+  getFocusTaskShareColor(index: number): string {
+    if (index === 0) {
+      return '#E89AAF';
+    }
+    if (index === 1) {
+      return '#9CBDE8';
+    }
+    if (index === 2) {
+      return '#9FD7BF';
+    }
+    if (index === 3) {
+      return '#F2C078';
+    }
+    if (index === 4) {
+      return '#BFA7E6';
+    }
+    return '#D8C9B8';
+  }
+
+  getTaskFocusShareMinutes(item: ToDo): number {
+    if (item.focusDurationMinutes > 0) {
+      return item.focusDurationMinutes;
+    }
+    return item.focusCount * item.plannedFocusMinutes;
+  }
+
+  getTaskFocusShares(): FocusTaskShare[] {
+    let taskNames: string[] = [];
+    let taskMinutes: number[] = [];
+    this.getAllTodos().forEach((item: ToDo) => {
+      if (item.taskType !== 'focus') {
+        return;
+      }
+      let minutes = this.getTaskFocusShareMinutes(item);
+      if (minutes > 0) {
+        let name = item.category.trim().length > 0 ? item.category.trim() : item.name;
+        let matchedIndex = taskNames.indexOf(name);
+        if (matchedIndex >= 0) {
+          taskMinutes[matchedIndex] += minutes;
+        } else {
+          taskNames.push(name);
+          taskMinutes.push(minutes);
+        }
+      }
+    });
+    let shares: FocusTaskShare[] = [];
+    taskNames.forEach((name: string, index: number) => {
+      shares.push({ name: name, minutes: taskMinutes[index] } as FocusTaskShare);
+    });
+    shares.sort((firstItem: FocusTaskShare, secondItem: FocusTaskShare) => secondItem.minutes - firstItem.minutes);
+    if (shares.length <= 5) {
+      return shares;
+    }
+    let visibleShares = shares.slice(0, 5);
+    let otherMinutes = 0;
+    shares.slice(5).forEach((item: FocusTaskShare) => {
+      otherMinutes += item.minutes;
+    });
+    if (otherMinutes > 0) {
+      visibleShares.push({ name: '\u5176\u4ED6', minutes: otherMinutes } as FocusTaskShare);
+    }
+    return visibleShares;
+  }
+
+  getTaskFocusShareTotalMinutes(): number {
+    let totalMinutes = 0;
+    this.getTaskFocusShares().forEach((item: FocusTaskShare) => {
+      totalMinutes += item.minutes;
+    });
+    return totalMinutes;
+  }
+
+  getTaskFocusSharePercent(index: number): number {
+    let totalMinutes = this.getTaskFocusShareTotalMinutes();
+    if (totalMinutes <= 0) {
+      return 0;
+    }
+    let shares = this.getTaskFocusShares();
+    if (index < 0 || index >= shares.length) {
+      return 0;
+    }
+    return Math.round(shares[index].minutes * 100 / totalMinutes);
+  }
+
+  drawFocusTaskPieChart() {
+    let context = this.focusTaskPieContext;
+    let shares = this.getTaskFocusShares();
+    context.clearRect(0, 0, 180, 180);
+    if (shares.length === 0) {
+      context.beginPath();
+      context.arc(90, 90, 72, 0, Math.PI * 2);
+      context.fillStyle = '#F6DDE8';
+      context.fill();
+      return;
+    }
+    let totalMinutes = this.getTaskFocusShareTotalMinutes();
+    let startAngle = -Math.PI / 2;
+    shares.forEach((item: FocusTaskShare, index: number) => {
+      let sweepAngle = Math.PI * 2 * item.minutes / totalMinutes;
+      context.beginPath();
+      context.moveTo(90, 90);
+      context.arc(90, 90, 72, startAngle, startAngle + sweepAngle);
+      context.closePath();
+      context.fillStyle = this.getFocusTaskShareColor(index);
+      context.fill();
+      startAngle += sweepAngle;
+    });
+    context.beginPath();
+    context.arc(90, 90, 72, 0, Math.PI * 2);
+    context.strokeStyle = '#FFFFFFFF';
+    context.lineWidth = 2;
+    context.stroke();
   }
 
   @Builder
   statisticsHeroCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\uD83D\uDCCA \u6570\u636E\u7EDF\u8BA1')
+      Text('\u6210\u957F\u6982\u89C8')
         .fontSize($r('sys.float.ohos_id_text_size_headline7'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
-      Text('\u770B\u89C1\u6BCF\u5929\u7684\u52AA\u529B\u548C\u6210\u957F')
+      Text(this.getStatisticsFeedback())
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        this.bannerPill(`\u2705 ${this.todayCompletedCount}\u5B8C\u6210`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
-        this.bannerPill(`\u23F1 ${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
-        this.bannerPill(`\uD83C\uDF1F ${this.score}\u79EF\u5206`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.bannerPill(this.getTodayStudyMoodTitle(), UI_COLORS.PET_PURPLE, Color.White)
+        this.bannerPill(`Lv.${this.getPetLevel()} ${this.getPetName()}`, UI_COLORS.ORANGE, Color.White)
       }
       .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(UI_COLORS.BLUE_LIGHT)
+    .backgroundColor('#FFF1F5')
     .shadow({
       radius: 12,
       color: UI_COLORS.CARD_SHADOW,
@@ -4243,41 +5892,355 @@ struct ToDoList {
   }
 
   @Builder
-  todayStudySummaryCard() {
+  statisticsTodayMetrics() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\uD83D\uDCD8 \u4ECA\u65E5\u72B6\u6001\u603B\u7ED3')
+      Text('\u4ECA\u65E5\u5B66\u4E60\u53CD\u9988')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.currentOutfitInfo('\u5B66\u4E60\u72B6\u6001', this.getTodayStudyMoodTitle(), UI_COLORS.MINT)
-        this.currentOutfitInfo('\u5F53\u524D\u79F0\u53F7', this.getLearningTitle(), UI_COLORS.PET_PURPLE)
+        this.growthMetricCard('\u4ECA\u65E5\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
+        this.growthMetricCard('\u4ECA\u65E5\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE, UI_COLORS.CREAM_WHITE)
+        this.growthMetricCard('\u5B8C\u6210\u4EFB\u52A1', `${this.todayCompletedCount}`, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
       }
       .width(Constant.PERCENT_FULL)
-      Text(this.getTodayStudyMoodDesc())
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  growthMetricCard(label: string, value: string, color: ResourceColor, cardBgColor: ResourceColor) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(value)
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(color)
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_MEDIUM)
+    .backgroundColor(cardBgColor)
+  }
+
+  @Builder
+  statisticsCumulativeCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u7D2F\u8BA1\u4E13\u6CE8')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.currentOutfitInfo('\u603B\u4E13\u6CE8', `${this.getTotalFocusMinutes()}\u5206`, UI_COLORS.FOCUS_BLUE)
+        this.currentOutfitInfo('\u603B\u756A\u8304', `${this.getTotalFocusCount()}`, UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+      CommonProgressBar({ progressPercent: this.getCompletionRate(), progressBarColor: UI_COLORS.PET_PURPLE, progressTrackColor: UI_COLORS.PINK_LIGHT })
+      Text(`\u4EFB\u52A1\u5B8C\u6210\u7387 ${this.getCompletionRate()}%\uFF0C\u6210\u957F\u7ECF\u9A8C ${this.petExp}`)
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
-      Text(this.getTodayQuote())
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#FFF8EE')
+  }
+
+  @Builder
+  statisticsFocusTypeDonutCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+          Text('\u5206\u7C7B\u4E13\u6CE8\u5360\u6BD4')
+            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+            .fontColor(UI_COLORS.TEXT_PRIMARY)
+            .fontWeight(FontWeight.Bold)
+            .width(Constant.PERCENT_FULL)
+          Text('\u6309\u4EFB\u52A1\u81EA\u52A8\u7EDF\u8BA1\u65F6\u95F4\u5206\u5E03')
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .width(Constant.PERCENT_FULL)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Text(`${this.getTaskFocusShareTotalMinutes()}\u5206`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.PET_PURPLE)
+          .fontWeight(FontWeight.Medium)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PINK_LIGHT)
+      }
+      .width(Constant.PERCENT_FULL)
+      if (this.getTaskFocusShareTotalMinutes() <= 0) {
+        this.emptyPanel('\u25CC', '\u8FD8\u6CA1\u6709\u4E13\u6CE8\u6570\u636E',
+          '\u5B8C\u6210\u4E00\u6B21\u4E13\u6CE8\u540E\uFF0C\u5206\u7C7B\u5360\u6BD4\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002')
+      } else {
+        Row({ space: STYLE_CONFIG.UI_CARD_GUTTER }) {
+          Stack() {
+            Canvas(this.focusTaskPieContext)
+              .width(188)
+              .height(188)
+              .onReady(() => {
+                this.drawFocusTaskPieChart();
+              })
+            Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+              Text(`${this.getTaskFocusShareTotalMinutes()}`)
+                .fontSize($r('sys.float.ohos_id_text_size_headline7'))
+                .fontColor(UI_COLORS.TEXT_PRIMARY)
+                .fontWeight(FontWeight.Bold)
+              Text('\u603B\u5206\u949F')
+                .fontSize($r('sys.float.ohos_id_text_size_body2'))
+                .fontColor(UI_COLORS.TEXT_SECONDARY)
+            }
+            .width(94)
+            .height(94)
+            .justifyContent(FlexAlign.Center)
+            .borderRadius(47)
+            .backgroundColor('#FDFBFF')
+            .shadow({ radius: 12, color: '#10000000', offsetX: 0, offsetY: 4 })
+          }
+          .width(188)
+          .height(188)
+          Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+            ForEach(this.getTaskFocusShares(), (item: FocusTaskShare, index: number) => {
+              this.focusTaskShareLegend(item, index)
+            }, (item: FocusTaskShare) => item.name)
+          }
+          .layoutWeight(1)
+          .padding({ top: STYLE_CONFIG.ICON_GUTTER })
+        }
+        .width(Constant.PERCENT_FULL)
+      }
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(24)
+    .backgroundColor('#FFFEFC')
+    .shadow({ radius: 18, color: '#10000000', offsetX: 0, offsetY: 7 })
+  }
+
+  @Builder
+  emptyPanel(iconText: string, title: string, description: string) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(iconText)
+        .fontSize(34)
+        .fontColor(UI_COLORS.TEXT_WEAK)
+      Text(title)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+      Text(description)
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .textAlign(TextAlign.Center)
         .width(Constant.PERCENT_FULL)
-      Text(`\u63A8\u8350\uFF1A${this.getNextStepSuggestion()}`)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(24)
+    .backgroundColor('#F7F4FF')
+  }
+
+  @Builder
+  focusTaskShareLegend(item: FocusTaskShare, index: number) {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Row()
+        .width(10)
+        .height(10)
+        .borderRadius(5)
+        .backgroundColor(this.getFocusTaskShareColor(index))
+      Column({ space: 2 }) {
+        Text(item.name)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Medium)
+          .maxLines(1)
+        Text(`${item.minutes}\u5206\u949F`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .maxLines(1)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      Text(`${this.getTaskFocusSharePercent(index)}%`)
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(UI_COLORS.FOCUS_BLUE)
+        .fontColor(this.getFocusTaskShareColor(index))
+        .fontWeight(FontWeight.Bold)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_MEDIUM)
+    .backgroundColor('#F8F6FB')
+  }
+
+  @Builder
+  statisticsWeeklyTrendCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u5468\u8D8B\u52BF\u9884\u89C8')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text('\u975E\u5386\u53F2\u8BB0\u5F55')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_WEAK)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        ForEach([0, 1, 2, 3, 4, 5, 6], (dayIndex: number) => {
+          this.weekTrendBar(dayIndex)
+        }, (dayIndex: number) => `${dayIndex}`)
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(118)
+      .alignItems(VerticalAlign.Bottom)
+      Text('\u6D45\u8272\u67F1\u5B50\u7528\u4E8E\u8282\u594F\u9884\u89C8\uFF0C\u4ECA\u65E5\u6570\u636E\u4F1A\u5728\u6700\u53F3\u4FA7\u66F4\u65B0\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
     .backgroundColor(Color.White)
-    .shadow({
-      radius: 10,
-      color: UI_COLORS.CARD_SHADOW,
-      offsetX: 0,
-      offsetY: 4
-    })
+  }
+
+  @Builder
+  weekTrendBar(dayIndex: number) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Blank()
+      Row()
+        .width(Constant.PERCENT_FULL)
+        .height(this.getTrendBarHeight(this.getWeeklyPreviewValue(dayIndex)))
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(dayIndex === 6 ? UI_COLORS.PET_PURPLE : '#F6DDE8')
+      Text(dayIndex === 6 ? '\u4ECA' : `${dayIndex + 1}`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(dayIndex === 6 ? UI_COLORS.PET_PURPLE : UI_COLORS.TEXT_WEAK)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+    }
+    .layoutWeight(1)
+    .height(118)
+  }
+
+  @Builder
+  statisticsMonthlyTrendCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u6708\u8D8B\u52BF')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      CommonProgressBar({ progressPercent: this.getPetProgress(), progressBarColor: UI_COLORS.ORANGE, progressTrackColor: UI_COLORS.CREAM_WHITE })
+      Text(`\u672C\u6708\u6210\u957F\u611F\u6765\u81EA\uFF1A${this.score}\u79EF\u5206\u3001${this.petExp}\u7ECF\u9A8C\u3001${this.getCompletedCount()}\u4E2A\u5DF2\u5B8C\u6210\u4EFB\u52A1\u3002`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#FFF1F5')
+  }
+
+  @Builder
+  statisticsTimeDistributionCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u5B66\u4E60\u65F6\u6BB5\u5206\u5E03')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      this.distributionRow('\u4E13\u6CE8\u65F6\u95F4', this.getTimeDistributionPercent(0), UI_COLORS.FOCUS_BLUE)
+      this.distributionRow('\u9605\u8BFB\u65F6\u95F4', this.getTimeDistributionPercent(1), UI_COLORS.MINT)
+      this.distributionRow('\u4EFB\u52A1\u63A8\u8FDB', this.getTimeDistributionPercent(2), UI_COLORS.ORANGE)
+      Text('\u57FA\u4E8E\u4ECA\u65E5\u4E13\u6CE8\u3001\u9605\u8BFB\u548C\u4EFB\u52A1\u5B8C\u6210\u6570\u751F\u6210\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_WEAK)
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  distributionRow(label: string, percent: number, color: ResourceColor) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(label)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .layoutWeight(1)
+        Text(`${percent}%`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(color)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row() {
+        Row()
+          .height(8)
+          .width(`${percent}%`)
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(color)
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(8)
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor('#F7EEF2')
+    }
+    .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  statisticsSummaryNoteCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u5C0F\u603B\u7ED3')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Text(this.getStatisticsFeedback())
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Text(`\u63A8\u8350\uFF1A${this.getNextStepSuggestion()}`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.FOCUS_BLUE)
+        .width(Constant.PERCENT_FULL)
+      Text('\u8FDB\u5165\u4E13\u6CE8\u72B6\u6001')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .height(40)
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(UI_COLORS.PET_PURPLE)
+        .onClick(() => {
+          this.currentTab = 3;
+        })
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#FFF8EE')
   }
 
   @Builder
@@ -4307,97 +6270,1568 @@ struct ToDoList {
 
   @Builder
   petPage() {
-    Scroll() {
-      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.studyBuddySpaceHero()
-        this.studyBuddyTodayCard()
-        this.studyBuddyGrowthCard()
-        this.studyBuddyActionsCard()
-        this.outfitStore()
+    if (this.isWideScreen) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.studyBuddySpaceHero()
+          this.currentOutfitCard()
+          this.moRoomCard()
+          this.moStageCard()
+        }
+        .layoutWeight(45)
+        .constraintSize({ maxWidth: 560 })
+        .alignSelf(ItemAlign.Start)
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.outfitStore()
+          this.moGrowthTasksCard()
+          this.studyBuddyGrowthCard()
+          this.moBadgeCard()
+          this.studyBuddyInteractionCard()
+        }
+        .layoutWeight(55)
+        .constraintSize({ maxWidth: 680 })
+        .alignSelf(ItemAlign.Start)
       }
       .width(Constant.PERCENT_FULL)
-      .padding({ bottom: STYLE_CONFIG.UI_PAGE_BOTTOM_SPACE })
+      .alignItems(VerticalAlign.Top)
+    } else {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.studyBuddySpaceHero()
+        this.moGrowthTasksCard()
+        this.outfitStore()
+        this.moRoomCard()
+        this.moStageCard()
+        this.moBadgeCard()
+        this.studyBuddyInteractionCard()
+      }
+      .width(Constant.PERCENT_FULL)
     }
-    .layoutWeight(1)
-    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  getMoSceneHeight(): number {
+    return this.isWideScreen ? 560 : 316;
+  }
+
+  getMoSceneActorSize(): number {
+    let stageName = this.getMoStageName();
+    if (stageName === '\u86CB' || stageName === '\u7834\u58F3') {
+      return this.isWideScreen ? 260 : 146;
+    }
+    if (stageName === '\u5E7C\u5D3D') {
+      return this.isWideScreen ? 266 : 142;
+    }
+    if (stageName === '\u5B66\u4E60\u4F19\u4F34') {
+      return this.isWideScreen ? 300 : 132;
+    }
+    return this.isWideScreen ? 292 : 160;
+  }
+
+  @Builder
+  moStudyRoomScene() {
+    Stack({ alignContent: Alignment.Center }) {
+      this.moStudyRoomBackground()
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.getMoStageName() === '\u86CB' || this.getMoStageName() === '\u7834\u58F3') {
+          this.moEggVisual(this.getMoSceneActorSize(), this.getMoStageName() === '\u7834\u58F3')
+        } else if (this.getMoStageName() === '\u5B66\u4E60\u4F19\u4F34') {
+          this.moSeatedBuddy(this.getMoSceneActorSize())
+        } else {
+          this.moRabbitBuddy(this.getMoSceneActorSize())
+        }
+      }
+      .width(this.getMoSceneActorSize())
+      .height(this.getMoSceneActorSize())
+      .zIndex(2)
+      Stack() {
+        this.moSceneOutfitLayer(this.getMoSceneActorSize())
+      }
+      .width(this.getMoSceneActorSize())
+      .height(this.getMoSceneActorSize())
+      .zIndex(3)
+    }
+    .width(Constant.PERCENT_FULL)
+    .height(this.getMoSceneHeight())
+    .borderRadius(28)
+    .clip(true)
+  }
+
+  @Builder
+  moStudyRoomBackground() {
+    Stack() {
+      Column()
+        .width(Constant.PERCENT_FULL)
+        .height(this.getMoSceneHeight())
+        .borderRadius(28)
+        .backgroundColor(this.getStudyRoomColor(this.selectedStudyRoomIndex))
+      Row()
+        .width(this.isWideScreen ? 390 : 270)
+        .height(this.isWideScreen ? 210 : 130)
+        .borderRadius(34)
+        .backgroundColor('#66FFFFFF')
+        .position({ x: this.isWideScreen ? 28 : 18, y: this.isWideScreen ? 34 : 24 })
+      Row()
+        .width(this.isWideScreen ? 132 : 94)
+        .height(this.isWideScreen ? 116 : 82)
+        .borderRadius(18)
+        .backgroundColor(this.selectedStudyRoomIndex === 1 ? '#38405F' : '#F8FCFF')
+        .border({ width: 3, color: '#FFFFFFFF' })
+        .position({ x: this.isWideScreen ? 250 : 188, y: this.isWideScreen ? 58 : 42 })
+      Row()
+        .width(this.isWideScreen ? 104 : 74)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor(this.selectedStudyRoomIndex === 1 ? '#F4D27C' : '#BFD6EA')
+        .position({ x: this.isWideScreen ? 264 : 198, y: this.isWideScreen ? 114 : 82 })
+      if (this.selectedStudyRoomIndex === 2) {
+        this.moRoomPlant(this.isWideScreen ? 46 : 36, this.isWideScreen ? 278 : 130, this.isWideScreen ? 1.5 : 1.1)
+        this.moRoomPlant(this.isWideScreen ? 356 : 232, this.isWideScreen ? 286 : 138, this.isWideScreen ? 1.25 : 0.9)
+      } else if (this.selectedStudyRoomIndex === 1) {
+        this.moRoomStar(this.isWideScreen ? 280 : 208, this.isWideScreen ? 76 : 56)
+        this.moRoomStar(this.isWideScreen ? 344 : 244, this.isWideScreen ? 98 : 72)
+        this.moRoomStar(this.isWideScreen ? 314 : 224, this.isWideScreen ? 142 : 103)
+      } else if (this.selectedStudyRoomIndex === 3) {
+        Row()
+          .width(this.isWideScreen ? 58 : 36)
+          .height(this.isWideScreen ? 58 : 36)
+          .borderRadius(this.isWideScreen ? 29 : 18)
+          .backgroundColor('#F4C57D')
+          .position({ x: this.isWideScreen ? 310 : 218, y: this.isWideScreen ? 84 : 58 })
+        Row()
+          .width(this.isWideScreen ? 118 : 72)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor('#F4C57D')
+          .opacity(0.32)
+          .position({ x: this.isWideScreen ? 278 : 200, y: this.isWideScreen ? 148 : 98 })
+      } else if (this.equippedOutfitIndex === 4) {
+        this.moRoomShelf(this.isWideScreen ? 54 : 42, this.isWideScreen ? 90 : 46)
+      } else {
+        this.moRoomShelf(this.isWideScreen ? 54 : 38, this.isWideScreen ? 98 : 54)
+        this.moRoomPlant(this.isWideScreen ? 350 : 236, this.isWideScreen ? 286 : 138, this.isWideScreen ? 1.15 : 0.8)
+      }
+      Row()
+        .width(this.isWideScreen ? 180 : 120)
+        .height(this.isWideScreen ? 16 : 12)
+        .borderRadius(6)
+        .backgroundColor(this.getStudyRoomAccentColor(this.selectedStudyRoomIndex))
+        .opacity(0.34)
+        .position({ x: this.isWideScreen ? 70 : 52, y: this.isWideScreen ? 170 : 112 })
+      Row()
+        .width(this.isWideScreen ? 326 : 232)
+        .height(this.isWideScreen ? 78 : 56)
+        .borderRadius(18)
+        .backgroundColor(this.selectedStudyRoomIndex === 1 ? '#C7BEDF' : '#EAD4B5')
+        .position({ x: this.isWideScreen ? 58 : 40, y: this.isWideScreen ? 392 : 198 })
+      Row()
+        .width(this.isWideScreen ? 360 : 250)
+        .height(this.isWideScreen ? 24 : 18)
+        .borderRadius(12)
+        .backgroundColor(this.getStudyRoomAccentColor(this.selectedStudyRoomIndex))
+        .opacity(0.78)
+        .position({ x: this.isWideScreen ? 42 : 30, y: this.isWideScreen ? 382 : 192 })
+      Row()
+        .width(this.isWideScreen ? 32 : 24)
+        .height(this.isWideScreen ? 82 : 58)
+        .borderRadius(16)
+        .backgroundColor('#D0B58E')
+        .position({ x: this.isWideScreen ? 88 : 70, y: this.isWideScreen ? 438 : 234 })
+      Row()
+        .width(this.isWideScreen ? 32 : 24)
+        .height(this.isWideScreen ? 82 : 58)
+        .borderRadius(16)
+        .backgroundColor('#D0B58E')
+        .position({ x: this.isWideScreen ? 312 : 220, y: this.isWideScreen ? 438 : 234 })
+      this.moRoomLamp(this.isWideScreen ? 76 : 64, this.isWideScreen ? 286 : 128)
+      Row()
+        .width(this.isWideScreen ? 92 : 66)
+        .height(this.isWideScreen ? 18 : 14)
+        .borderRadius(9)
+        .backgroundColor('#F8F2E7')
+        .position({ x: this.isWideScreen ? 270 : 172, y: this.isWideScreen ? 358 : 178 })
+      Row()
+        .width(this.isWideScreen ? 62 : 42)
+        .height(this.isWideScreen ? 10 : 8)
+        .borderRadius(5)
+        .backgroundColor('#B8D4EF')
+        .position({ x: this.isWideScreen ? 288 : 184, y: this.isWideScreen ? 344 : 168 })
+    }
+    .width(Constant.PERCENT_FULL)
+    .height(this.getMoSceneHeight())
+    .borderRadius(28)
+  }
+
+  @Builder
+  moEggVisual(displaySize: number, cracked: boolean) {
+    Stack() {
+      Row()
+        .width(displaySize * 0.72)
+        .height(displaySize * 0.18)
+        .borderRadius(displaySize * 0.09)
+        .backgroundColor('#16000000')
+        .position({ x: displaySize * 0.14, y: displaySize * 0.78 })
+      Row()
+        .width(displaySize * 0.64)
+        .height(displaySize * 0.82)
+        .borderRadius(displaySize * 0.32)
+        .backgroundColor('#FFF3D7')
+        .border({ width: 3, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.18, y: displaySize * 0.08 })
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#AAFFFFFF')
+        .position({ x: displaySize * 0.34, y: displaySize * 0.18 })
+      Row()
+        .width(displaySize * 0.08)
+        .height(displaySize * 0.05)
+        .borderRadius(displaySize * 0.025)
+        .backgroundColor('#AAFFFFFF')
+        .position({ x: displaySize * 0.5, y: displaySize * 0.3 })
+      if (cracked) {
+        Row()
+          .width(displaySize * 0.08)
+          .height(displaySize * 0.32)
+          .borderRadius(displaySize * 0.02)
+          .backgroundColor('#C6A77B')
+          .rotate({ angle: -28 })
+          .position({ x: displaySize * 0.44, y: displaySize * 0.18 })
+        Row()
+          .width(displaySize * 0.08)
+          .height(displaySize * 0.22)
+          .borderRadius(displaySize * 0.02)
+          .backgroundColor('#C6A77B')
+          .rotate({ angle: 34 })
+          .position({ x: displaySize * 0.51, y: displaySize * 0.42 })
+      }
+    }
+    .width(displaySize)
+    .height(displaySize)
+  }
+
+  @Builder
+  moRabbitBuddy(displaySize: number) {
+    Stack() {
+      Row()
+        .width(displaySize * 0.68)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#16000000')
+        .position({ x: displaySize * 0.16, y: displaySize * 0.88 })
+      Row()
+        .width(displaySize * 0.5)
+        .height(displaySize * 0.38)
+        .borderRadius(displaySize * 0.2)
+        .backgroundColor('#F6E5D1')
+        .position({ x: displaySize * 0.25, y: displaySize * 0.55 })
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.38)
+        .borderRadius(displaySize * 0.08)
+        .backgroundColor('#F6E5D1')
+        .rotate({ angle: -16 })
+        .position({ x: displaySize * 0.28, y: displaySize * 0.02 })
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.38)
+        .borderRadius(displaySize * 0.08)
+        .backgroundColor('#F6E5D1')
+        .rotate({ angle: 16 })
+        .position({ x: displaySize * 0.56, y: displaySize * 0.02 })
+      Row()
+        .width(displaySize * 0.1)
+        .height(displaySize * 0.28)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#F4BFC5')
+        .rotate({ angle: -16 })
+        .position({ x: displaySize * 0.31, y: displaySize * 0.08 })
+      Row()
+        .width(displaySize * 0.1)
+        .height(displaySize * 0.28)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#F4BFC5')
+        .rotate({ angle: 16 })
+        .position({ x: displaySize * 0.59, y: displaySize * 0.08 })
+      Row()
+        .width(displaySize * 0.62)
+        .height(displaySize * 0.58)
+        .borderRadius(displaySize * 0.31)
+        .backgroundColor('#FFF1DE')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.19, y: displaySize * 0.24 })
+      Row()
+        .width(displaySize * 0.09)
+        .height(displaySize * 0.09)
+        .borderRadius(displaySize * 0.045)
+        .backgroundColor('#34323A')
+        .position({ x: displaySize * 0.36, y: displaySize * 0.47 })
+      Row()
+        .width(displaySize * 0.09)
+        .height(displaySize * 0.09)
+        .borderRadius(displaySize * 0.045)
+        .backgroundColor('#34323A')
+        .position({ x: displaySize * 0.56, y: displaySize * 0.47 })
+      Row()
+        .width(displaySize * 0.08)
+        .height(displaySize * 0.055)
+        .borderRadius(displaySize * 0.028)
+        .backgroundColor('#E7A0AA')
+        .position({ x: displaySize * 0.46, y: displaySize * 0.57 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.025)
+        .borderRadius(displaySize * 0.013)
+        .backgroundColor('#A85F67')
+        .position({ x: displaySize * 0.43, y: displaySize * 0.65 })
+      Row()
+        .width(displaySize * 0.1)
+        .height(displaySize * 0.06)
+        .borderRadius(displaySize * 0.03)
+        .backgroundColor('#F7C2C8')
+        .opacity(0.75)
+        .position({ x: displaySize * 0.27, y: displaySize * 0.59 })
+      Row()
+        .width(displaySize * 0.1)
+        .height(displaySize * 0.06)
+        .borderRadius(displaySize * 0.03)
+        .backgroundColor('#F7C2C8')
+        .opacity(0.75)
+        .position({ x: displaySize * 0.63, y: displaySize * 0.59 })
+      this.moAnimalDecorations(displaySize)
+    }
+    .width(displaySize)
+    .height(displaySize)
+  }
+
+  @Builder
+  moSeatedBuddy(displaySize: number) {
+    Stack() {
+      this.moRabbitBuddy(displaySize)
+      Row()
+        .width(displaySize * 0.44)
+        .height(displaySize * 0.18)
+        .borderRadius(displaySize * 0.03)
+        .backgroundColor('#F8F2E7')
+        .border({ width: 1, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.28, y: displaySize * 0.7 })
+      Row()
+        .width(displaySize * 0.018)
+        .height(displaySize * 0.16)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#B8D4EF')
+        .position({ x: displaySize * 0.49, y: displaySize * 0.71 })
+    }
+    .width(displaySize)
+    .height(displaySize)
+  }
+
+  @Builder
+  moAnimalDecorations(displaySize: number) {
+    if (this.equippedOutfitIndex === 0) {
+      Row()
+        .width(displaySize * 0.58)
+        .height(displaySize * 0.105)
+        .borderRadius(displaySize * 0.052)
+        .backgroundColor('#D59B38')
+        .border({ width: 1, color: '#FFFFF4D8' })
+        .position({ x: displaySize * 0.21, y: displaySize * 0.735 })
+      Row()
+        .width(displaySize * 0.13)
+        .height(displaySize * 0.2)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#C98F30')
+        .rotate({ angle: 10 })
+        .position({ x: displaySize * 0.61, y: displaySize * 0.8 })
+    } else if (this.equippedOutfitIndex === 1) {
+      Stack() {
+        Row()
+          .width(displaySize * 0.32)
+          .height(displaySize * 0.12)
+          .borderRadius(displaySize * 0.06)
+          .backgroundColor('#8D84CE')
+        Row()
+          .width(displaySize * 0.08)
+          .height(displaySize * 0.08)
+          .borderRadius(displaySize * 0.02)
+          .backgroundColor('#F5C86B')
+          .rotate({ angle: 45 })
+          .position({ x: displaySize * 0.12, y: displaySize * 0.02 })
+      }
+      .width(displaySize * 0.34)
+      .height(displaySize * 0.14)
+      .position({ x: displaySize * 0.33, y: displaySize * 0.23 })
+    } else if (this.equippedOutfitIndex === 2) {
+      Row()
+        .width(displaySize * 0.24)
+        .height(displaySize * 0.28)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#7CB894')
+        .position({ x: displaySize * 0.64, y: displaySize * 0.62 })
+    } else if (this.equippedOutfitIndex === 3) {
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .border({ width: 2, color: '#4F5B66' })
+        .position({ x: displaySize * 0.32, y: displaySize * 0.47 })
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .border({ width: 2, color: '#4F5B66' })
+        .position({ x: displaySize * 0.52, y: displaySize * 0.47 })
+      Row()
+        .width(displaySize * 0.06)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#4F5B66')
+        .position({ x: displaySize * 0.47, y: displaySize * 0.5 })
+    } else if (this.equippedOutfitIndex === 4) {
+      Row()
+        .width(displaySize * 0.18)
+        .height(displaySize * 0.18)
+        .borderRadius(displaySize * 0.09)
+        .backgroundColor('#F5C86B')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.66, y: displaySize * 0.67 })
+    }
+  }
+
+  @Builder
+  moSceneOutfitLayer(displaySize: number) {
+    if (this.getMoStageName() === '\u86CB' || this.getMoStageName() === '\u7834\u58F3') {
+      this.moEggOutfitDecoration(displaySize)
+    } else {
+      this.moBuddyOutfitDecoration(displaySize)
+    }
+  }
+
+  @Builder
+  moEggOutfitDecoration(displaySize: number) {
+    if (this.equippedOutfitIndex === 0) {
+      Row()
+        .width(displaySize * 0.76)
+        .height(displaySize * 0.14)
+        .borderRadius(displaySize * 0.07)
+        .backgroundColor('#D99D35')
+        .border({ width: 2, color: '#FFFFF4D8' })
+        .position({ x: displaySize * 0.12, y: displaySize * 0.56 })
+      Row()
+        .width(displaySize * 0.25)
+        .height(displaySize * 0.14)
+        .borderRadius(displaySize * 0.065)
+        .backgroundColor('#C98F30')
+        .rotate({ angle: -16 })
+        .position({ x: displaySize * 0.56, y: displaySize * 0.665 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.3)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#D49A32')
+        .position({ x: displaySize * 0.655, y: displaySize * 0.69 })
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.12)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#FFE8A8')
+        .position({ x: displaySize * 0.28, y: displaySize * 0.568 })
+    } else if (this.equippedOutfitIndex === 1) {
+      Row()
+        .width(displaySize * 0.2)
+        .height(displaySize * 0.2)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#F5C86B')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .rotate({ angle: 45 })
+        .position({ x: displaySize * 0.6, y: displaySize * 0.26 })
+      Row()
+        .width(displaySize * 0.24)
+        .height(displaySize * 0.07)
+        .borderRadius(displaySize * 0.035)
+        .backgroundColor('#8D84CE')
+        .position({ x: displaySize * 0.5, y: displaySize * 0.39 })
+    } else if (this.equippedOutfitIndex === 2) {
+      Row()
+        .width(displaySize * 0.22)
+        .height(displaySize * 0.26)
+        .borderRadius(displaySize * 0.07)
+        .backgroundColor('#7CB894')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.68, y: displaySize * 0.54 })
+      Row()
+        .width(displaySize * 0.08)
+        .height(displaySize * 0.16)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#5F9C78')
+        .position({ x: displaySize * 0.73, y: displaySize * 0.58 })
+    } else if (this.equippedOutfitIndex === 3) {
+      Row()
+        .width(displaySize * 0.17)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .border({ width: 2, color: '#4F5B66' })
+        .backgroundColor('#22FFFFFF')
+        .position({ x: displaySize * 0.31, y: displaySize * 0.44 })
+      Row()
+        .width(displaySize * 0.17)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .border({ width: 2, color: '#4F5B66' })
+        .backgroundColor('#22FFFFFF')
+        .position({ x: displaySize * 0.52, y: displaySize * 0.44 })
+      Row()
+        .width(displaySize * 0.06)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#4F5B66')
+        .position({ x: displaySize * 0.47, y: displaySize * 0.475 })
+    } else if (this.equippedOutfitIndex === 4) {
+      Row()
+        .width(displaySize * 0.18)
+        .height(displaySize * 0.18)
+        .borderRadius(displaySize * 0.09)
+        .backgroundColor('#F5C86B')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.62, y: displaySize * 0.5 })
+      Text('A')
+        .fontSize(displaySize * 0.085)
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Bold)
+        .position({ x: displaySize * 0.67, y: displaySize * 0.525 })
+    }
+  }
+
+  @Builder
+  moBuddyOutfitDecoration(displaySize: number) {
+    if (this.equippedOutfitIndex === 0) {
+      Row()
+        .width(displaySize * 0.82)
+        .height(displaySize * 0.135)
+        .borderRadius(displaySize * 0.068)
+        .backgroundColor('#D99D35')
+        .border({ width: 2, color: '#FFFFF4D8' })
+        .position({ x: displaySize * 0.09, y: displaySize * 0.625 })
+      Row()
+        .width(displaySize * 0.27)
+        .height(displaySize * 0.15)
+        .borderRadius(displaySize * 0.065)
+        .backgroundColor('#C98F30')
+        .rotate({ angle: 18 })
+        .position({ x: displaySize * 0.55, y: displaySize * 0.72 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.245)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#D49A32')
+        .position({ x: displaySize * 0.66, y: displaySize * 0.735 })
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.12)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#FFE8A8')
+        .position({ x: displaySize * 0.3, y: displaySize * 0.638 })
+    } else if (this.equippedOutfitIndex === 1) {
+      Stack() {
+        Row()
+          .width(displaySize * 0.32)
+          .height(displaySize * 0.12)
+          .borderRadius(displaySize * 0.06)
+          .backgroundColor('#8D84CE')
+        Row()
+          .width(displaySize * 0.1)
+          .height(displaySize * 0.1)
+          .borderRadius(displaySize * 0.025)
+          .backgroundColor('#F5C86B')
+          .border({ width: 1, color: '#FFFFFFFF' })
+          .rotate({ angle: 45 })
+          .position({ x: displaySize * 0.12, y: displaySize * 0.01 })
+      }
+      .width(displaySize * 0.34)
+      .height(displaySize * 0.14)
+      .position({ x: displaySize * 0.33, y: displaySize * 0.2 })
+    } else if (this.equippedOutfitIndex === 2) {
+      Row()
+        .width(displaySize * 0.24)
+        .height(displaySize * 0.3)
+        .borderRadius(displaySize * 0.07)
+        .backgroundColor('#7CB894')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.64, y: displaySize * 0.58 })
+      Row()
+        .width(displaySize * 0.07)
+        .height(displaySize * 0.18)
+        .borderRadius(displaySize * 0.035)
+        .backgroundColor('#5F9C78')
+        .position({ x: displaySize * 0.69, y: displaySize * 0.62 })
+    } else if (this.equippedOutfitIndex === 3) {
+      Row()
+        .width(displaySize * 0.17)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .border({ width: 2, color: '#4F5B66' })
+        .backgroundColor('#22FFFFFF')
+        .position({ x: displaySize * 0.31, y: displaySize * 0.465 })
+      Row()
+        .width(displaySize * 0.17)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .border({ width: 2, color: '#4F5B66' })
+        .backgroundColor('#22FFFFFF')
+        .position({ x: displaySize * 0.52, y: displaySize * 0.465 })
+      Row()
+        .width(displaySize * 0.06)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#4F5B66')
+        .position({ x: displaySize * 0.47, y: displaySize * 0.5 })
+    } else if (this.equippedOutfitIndex === 4) {
+      Row()
+        .width(displaySize * 0.18)
+        .height(displaySize * 0.18)
+        .borderRadius(displaySize * 0.09)
+        .backgroundColor('#F5C86B')
+        .border({ width: 2, color: '#FFFFFFFF' })
+        .position({ x: displaySize * 0.62, y: displaySize * 0.68 })
+      Text('A')
+        .fontSize(displaySize * 0.085)
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Bold)
+        .position({ x: displaySize * 0.67, y: displaySize * 0.705 })
+    }
+  }
+
+  @Builder
+  moRoomLamp(x: number, y: number) {
+    Row()
+      .width(34)
+      .height(24)
+      .borderRadius(10)
+      .backgroundColor('#F6D98A')
+      .position({ x: x, y: y })
+    Row()
+      .width(8)
+      .height(48)
+      .borderRadius(4)
+      .backgroundColor('#B9A17D')
+      .position({ x: x + 13, y: y + 24 })
+    Row()
+      .width(48)
+      .height(8)
+      .borderRadius(4)
+      .backgroundColor('#B9A17D')
+      .position({ x: x - 7, y: y + 68 })
+  }
+
+  @Builder
+  moRoomShelf(x: number, y: number) {
+    Row()
+      .width(112)
+      .height(12)
+      .borderRadius(6)
+      .backgroundColor('#D7B990')
+      .position({ x: x, y: y })
+    Row()
+      .width(18)
+      .height(38)
+      .borderRadius(5)
+      .backgroundColor('#BFD6EA')
+      .position({ x: x + 12, y: y - 32 })
+    Row()
+      .width(18)
+      .height(32)
+      .borderRadius(5)
+      .backgroundColor('#F4CBB9')
+      .position({ x: x + 36, y: y - 26 })
+    Row()
+      .width(18)
+      .height(36)
+      .borderRadius(5)
+      .backgroundColor('#A9D6B2')
+      .position({ x: x + 60, y: y - 30 })
+  }
+
+  @Builder
+  moRoomPlant(x: number, y: number, scaleValue: number) {
+    Row()
+      .width(30 * scaleValue)
+      .height(26 * scaleValue)
+      .borderRadius(8 * scaleValue)
+      .backgroundColor('#D7B990')
+      .position({ x: x, y: y + 34 * scaleValue })
+    Row()
+      .width(28 * scaleValue)
+      .height(44 * scaleValue)
+      .borderRadius(14 * scaleValue)
+      .backgroundColor('#7CB894')
+      .rotate({ angle: -22 })
+      .position({ x: x - 8 * scaleValue, y: y })
+    Row()
+      .width(28 * scaleValue)
+      .height(44 * scaleValue)
+      .borderRadius(14 * scaleValue)
+      .backgroundColor('#8CC79B')
+      .rotate({ angle: 24 })
+      .position({ x: x + 12 * scaleValue, y: y + 2 * scaleValue })
+  }
+
+  @Builder
+  moRoomStar(x: number, y: number) {
+    Row()
+      .width(8)
+      .height(8)
+      .borderRadius(4)
+      .backgroundColor('#F6D98A')
+      .position({ x: x, y: y })
+  }
+
+  @Builder
+  moOutfitAvatar(displaySize: number) {
+    Stack() {
+      if (this.getMoStageName() === '\u86CB' || this.getMoStageName() === '\u7834\u58F3') {
+        Stack() {
+          this.moEggVisual(displaySize * 0.82, this.getMoStageName() === '\u7834\u58F3')
+        }
+        .width(displaySize * 0.82)
+        .height(displaySize * 0.82)
+        .position({ x: displaySize * 0.09, y: displaySize * 0.1 })
+      } else {
+        Stack() {
+          this.moRabbitBuddy(displaySize * 0.86)
+        }
+        .width(displaySize * 0.86)
+        .height(displaySize * 0.86)
+        .position({ x: displaySize * 0.07, y: displaySize * 0.06 })
+      }
+    }
+    .width(displaySize)
+    .height(displaySize)
+    .backgroundColor(this.getOutfitRoomBgColor(this.equippedOutfitIndex))
+    .borderRadius(displaySize * 0.22)
+  }
+
+  @Builder
+  moCartoonBuddy(displaySize: number) {
+    Stack() {
+      Row()
+        .width(displaySize * 0.62)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#18000000')
+        .position({ x: displaySize * 0.19, y: displaySize * 0.9 })
+      Row()
+        .width(displaySize * 0.5)
+        .height(displaySize * 0.24)
+        .borderRadius(displaySize * 0.12)
+        .backgroundColor('#EEF6EF')
+        .position({ x: displaySize * 0.25, y: displaySize * 0.62 })
+      Row()
+        .width(displaySize * 0.4)
+        .height(displaySize * 0.34)
+        .borderRadius(displaySize * 0.16)
+        .backgroundColor('#DCEEE2')
+        .position({ x: displaySize * 0.3, y: displaySize * 0.5 })
+      Row()
+        .width(displaySize * 0.42)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#F4E5CC')
+        .position({ x: displaySize * 0.29, y: displaySize * 0.52 })
+      Row()
+        .width(displaySize * 0.18)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#8CBFA7')
+        .position({ x: displaySize * 0.41, y: displaySize * 0.62 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.24)
+        .borderRadius(displaySize * 0.07)
+        .backgroundColor('#ADCBB9')
+        .rotate({ angle: -8 })
+        .position({ x: displaySize * 0.34, y: displaySize * 0.78 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.24)
+        .borderRadius(displaySize * 0.07)
+        .backgroundColor('#ADCBB9')
+        .rotate({ angle: 8 })
+        .position({ x: displaySize * 0.52, y: displaySize * 0.78 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#F7F0E4')
+        .position({ x: displaySize * 0.33, y: displaySize * 0.88 })
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#F7F0E4')
+        .position({ x: displaySize * 0.53, y: displaySize * 0.88 })
+      this.moCartoonArms(displaySize, this.getMoExpressionState())
+      Row()
+        .width(displaySize * 0.68)
+        .height(displaySize * 0.64)
+        .borderRadius(displaySize * 0.32)
+        .backgroundColor('#F8DDBB')
+        .position({ x: displaySize * 0.16, y: displaySize * 0.08 })
+      Row()
+        .width(displaySize * 0.72)
+        .height(displaySize * 0.28)
+        .borderRadius(displaySize * 0.14)
+        .backgroundColor('#D9B98D')
+        .position({ x: displaySize * 0.14, y: displaySize * 0.05 })
+      Row()
+        .width(displaySize * 0.2)
+        .height(displaySize * 0.22)
+        .borderRadius(displaySize * 0.1)
+        .backgroundColor('#D9B98D')
+        .rotate({ angle: -18 })
+        .position({ x: displaySize * 0.22, y: displaySize * 0.18 })
+      Row()
+        .width(displaySize * 0.18)
+        .height(displaySize * 0.2)
+        .borderRadius(displaySize * 0.09)
+        .backgroundColor('#D9B98D')
+        .rotate({ angle: 15 })
+        .position({ x: displaySize * 0.41, y: displaySize * 0.13 })
+      Row()
+        .width(displaySize * 0.17)
+        .height(displaySize * 0.2)
+        .borderRadius(displaySize * 0.085)
+        .backgroundColor('#D9B98D')
+        .rotate({ angle: 24 })
+        .position({ x: displaySize * 0.56, y: displaySize * 0.16 })
+      Row()
+        .width(displaySize * 0.08)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#F3C8BA')
+        .opacity(0.65)
+        .position({ x: displaySize * 0.29, y: displaySize * 0.44 })
+      Row()
+        .width(displaySize * 0.08)
+        .height(displaySize * 0.08)
+        .borderRadius(displaySize * 0.04)
+        .backgroundColor('#F3C8BA')
+        .opacity(0.65)
+        .position({ x: displaySize * 0.63, y: displaySize * 0.44 })
+      this.moCartoonEyes(displaySize, this.getMoExpressionState())
+      this.moCartoonMouth(displaySize, this.getMoExpressionState())
+      if (this.getMoExpressionState() === 'achieve') {
+        this.moStar(displaySize)
+      }
+      if (this.getMoExpressionState() === 'focus') {
+        this.moDesk(displaySize)
+      }
+    }
+    .width(displaySize)
+    .height(displaySize)
+  }
+
+  @Builder
+  moCartoonArms(displaySize: number, expressionState: string) {
+    if (expressionState === 'happy') {
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.34)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: -34 })
+        .position({ x: displaySize * 0.18, y: displaySize * 0.48 })
+      Row()
+        .width(displaySize * 0.1)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#F8DDBB')
+        .position({ x: displaySize * 0.13, y: displaySize * 0.38 })
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.28)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: 22 })
+        .position({ x: displaySize * 0.68, y: displaySize * 0.53 })
+    } else if (expressionState === 'achieve') {
+      Row()
+        .width(displaySize * 0.11)
+        .height(displaySize * 0.36)
+        .borderRadius(displaySize * 0.055)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: -28 })
+        .position({ x: displaySize * 0.23, y: displaySize * 0.47 })
+      Row()
+        .width(displaySize * 0.11)
+        .height(displaySize * 0.36)
+        .borderRadius(displaySize * 0.055)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: 30 })
+        .position({ x: displaySize * 0.66, y: displaySize * 0.39 })
+      Row()
+        .width(displaySize * 0.1)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#F8DDBB')
+        .position({ x: displaySize * 0.76, y: displaySize * 0.32 })
+    } else if (expressionState === 'focus') {
+      Row()
+        .width(displaySize * 0.22)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: 6 })
+        .position({ x: displaySize * 0.28, y: displaySize * 0.68 })
+      Row()
+        .width(displaySize * 0.22)
+        .height(displaySize * 0.1)
+        .borderRadius(displaySize * 0.05)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: -6 })
+        .position({ x: displaySize * 0.5, y: displaySize * 0.68 })
+    } else {
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.3)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: -16 })
+        .position({ x: displaySize * 0.2, y: displaySize * 0.52 })
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.3)
+        .borderRadius(displaySize * 0.06)
+        .backgroundColor('#DCEEE2')
+        .rotate({ angle: 16 })
+        .position({ x: displaySize * 0.68, y: displaySize * 0.52 })
+      this.moBook(displaySize)
+    }
+  }
+
+  @Builder
+  moBook(displaySize: number) {
+    Row()
+      .width(displaySize * 0.34)
+      .height(displaySize * 0.2)
+      .borderRadius(displaySize * 0.025)
+      .backgroundColor('#BBD3F2')
+      .border({ width: 1, color: '#FFFFFFFF' })
+      .position({ x: displaySize * 0.33, y: displaySize * 0.63 })
+    Row()
+      .width(displaySize * 0.018)
+      .height(displaySize * 0.18)
+      .borderRadius(displaySize * 0.009)
+      .backgroundColor('#F7F0E4')
+      .position({ x: displaySize * 0.49, y: displaySize * 0.64 })
+  }
+
+  @Builder
+  moDesk(displaySize: number) {
+    Row()
+      .width(displaySize * 0.66)
+      .height(displaySize * 0.1)
+      .borderRadius(displaySize * 0.05)
+      .backgroundColor('#EAD4B5')
+      .position({ x: displaySize * 0.17, y: displaySize * 0.75 })
+    Row()
+      .width(displaySize * 0.3)
+      .height(displaySize * 0.16)
+      .borderRadius(displaySize * 0.025)
+      .backgroundColor('#F8F2E7')
+      .border({ width: 1, color: '#FFFFFFFF' })
+      .position({ x: displaySize * 0.35, y: displaySize * 0.62 })
+    Row()
+      .width(displaySize * 0.12)
+      .height(displaySize * 0.05)
+      .borderRadius(displaySize * 0.025)
+      .backgroundColor('#95BDE5')
+      .position({ x: displaySize * 0.6, y: displaySize * 0.58 })
+  }
+
+  @Builder
+  moStar(displaySize: number) {
+    Stack() {
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.16)
+        .borderRadius(displaySize * 0.025)
+        .backgroundColor('#F5C86B')
+        .rotate({ angle: 45 })
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.16)
+        .borderRadius(displaySize * 0.025)
+        .backgroundColor('#F5C86B')
+    }
+    .width(displaySize * 0.18)
+    .height(displaySize * 0.18)
+    .position({ x: displaySize * 0.79, y: displaySize * 0.25 })
+  }
+
+  @Builder
+  moCartoonEyes(displaySize: number, expressionState: string) {
+    if (expressionState === 'sleepy') {
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#3C3640')
+        .position({ x: displaySize * 0.33, y: displaySize * 0.39 })
+      Row()
+        .width(displaySize * 0.12)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#3C3640')
+        .position({ x: displaySize * 0.55, y: displaySize * 0.39 })
+    } else if (expressionState === 'serious' || expressionState === 'focus') {
+      Row()
+        .width(displaySize * 0.105)
+        .height(displaySize * 0.04)
+        .borderRadius(displaySize * 0.02)
+        .backgroundColor('#3C3640')
+        .position({ x: displaySize * 0.34, y: displaySize * 0.37 })
+      Row()
+        .width(displaySize * 0.105)
+        .height(displaySize * 0.04)
+        .borderRadius(displaySize * 0.02)
+        .backgroundColor('#3C3640')
+        .position({ x: displaySize * 0.56, y: displaySize * 0.37 })
+    } else {
+      Row()
+        .width(displaySize * 0.11)
+        .height(displaySize * 0.11)
+        .borderRadius(displaySize * 0.055)
+        .backgroundColor('#3C3640')
+        .position({ x: displaySize * 0.34, y: displaySize * 0.34 })
+      Row()
+        .width(displaySize * 0.11)
+        .height(displaySize * 0.11)
+        .borderRadius(displaySize * 0.055)
+        .backgroundColor('#3C3640')
+        .position({ x: displaySize * 0.56, y: displaySize * 0.34 })
+      Row()
+        .width(displaySize * 0.035)
+        .height(displaySize * 0.035)
+        .borderRadius(displaySize * 0.018)
+        .backgroundColor(Color.White)
+        .position({ x: displaySize * 0.37, y: displaySize * 0.355 })
+      Row()
+        .width(displaySize * 0.035)
+        .height(displaySize * 0.035)
+        .borderRadius(displaySize * 0.018)
+        .backgroundColor(Color.White)
+        .position({ x: displaySize * 0.59, y: displaySize * 0.355 })
+    }
+  }
+
+  @Builder
+  moCartoonMouth(displaySize: number, expressionState: string) {
+    if (expressionState === 'happy' || expressionState === 'achieve') {
+      Row()
+        .width(displaySize * 0.16)
+        .height(displaySize * 0.045)
+        .borderRadius(displaySize * 0.023)
+        .backgroundColor('#B86F64')
+        .position({ x: displaySize * 0.42, y: displaySize * 0.49 })
+    } else if (expressionState === 'sleepy') {
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#8B5C64')
+        .position({ x: displaySize * 0.43, y: displaySize * 0.5 })
+    } else if (expressionState === 'serious' || expressionState === 'focus') {
+      Row()
+        .width(displaySize * 0.13)
+        .height(displaySize * 0.016)
+        .borderRadius(displaySize * 0.008)
+        .backgroundColor('#6B5B5B')
+        .position({ x: displaySize * 0.435, y: displaySize * 0.5 })
+    } else {
+      Row()
+        .width(displaySize * 0.14)
+        .height(displaySize * 0.018)
+        .borderRadius(displaySize * 0.009)
+        .backgroundColor('#6B5B5B')
+        .position({ x: displaySize * 0.43, y: displaySize * 0.47 })
+    }
   }
 
   @Builder
   studyBuddySpaceHero() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        Text(this.getPetEmoji())
-          .fontSize(80)
-          .textAlign(TextAlign.Center)
-          .width(Constant.PERCENT_FULL)
-        Text(this.getStudyBuddyName())
-          .fontSize($r('sys.float.ohos_id_text_size_headline7'))
-          .fontColor(UI_COLORS.TEXT_PRIMARY)
-          .fontWeight(FontWeight.Bold)
-          .textAlign(TextAlign.Center)
-          .width(Constant.PERCENT_FULL)
-        Row({ space: 8 }) {
-          CommonPill({ pillLabel: 'Lv.' + this.getPetLevel(), pillTextColor: Color.White, pillBgColor: UI_COLORS.PET_PURPLE })
-          CommonPill({ pillLabel: this.getStudyBuddyMood(), pillTextColor: UI_COLORS.TEXT_PRIMARY, pillBgColor: Color.White })
-        }
-        .justifyContent(FlexAlign.Center)
+      this.moStudyRoomScene()
+      Text(this.getMoStageName())
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
         .width(Constant.PERCENT_FULL)
-        if (this.equippedOutfitIndex >= 0 && this.ownedOutfits[this.equippedOutfitIndex]) {
-          Text('穿着 ' + this.getEquippedOutfitName())
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(UI_COLORS.TEXT_SECONDARY)
-            .textAlign(TextAlign.Center)
-            .width(Constant.PERCENT_FULL)
-        }
+      Text(`\u201C${this.studyBuddyReply.length > 0 ? this.studyBuddyReply : this.getMoStageMessage()}\u201D`)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Medium)
+        .width(Constant.PERCENT_FULL)
+        .padding({ left: 18, right: 18, top: 14, bottom: 14 })
+        .borderRadius(24)
+        .backgroundColor(Color.White)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.moRoomInfoPill('\u7B49\u7EA7', `Lv.${this.getPetLevel()}`)
+        this.moRoomInfoPill('\u7ECF\u9A8C', `${this.petExp}`)
+        this.moRoomInfoPill('\u79EF\u5206', `${this.score}`)
       }
       .width(Constant.PERCENT_FULL)
-      .padding({ top: STYLE_CONFIG.UI_CARD_PADDING * 2, bottom: STYLE_CONFIG.UI_CARD_PADDING, left: STYLE_CONFIG.UI_CARD_PADDING, right: STYLE_CONFIG.UI_CARD_PADDING })
-      .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-      .backgroundColor(UI_COLORS.MINT_LIGHT)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.moRoomInfoPill('\u72B6\u6001', this.getMoTodayCompanionText())
+        this.moRoomInfoPill('\u88C5\u9970', this.getEquippedOutfitName())
+      }
+      .width(Constant.PERCENT_FULL)
+      CommonProgressBar({ progressPercent: this.getPetProgress(), progressBarColor: UI_COLORS.PET_PURPLE, progressTrackColor: '#AAFFFFFF' })
     }
+    .width(Constant.PERCENT_FULL)
+    .padding(24)
+    .borderRadius(28)
+    .backgroundColor(this.getOutfitRoomBgColor(this.equippedOutfitIndex))
+    .shadow({ radius: 22, color: '#12000000', offsetX: 0, offsetY: 8 })
+  }
+
+  @Builder
+  moRoomInfoPill(labelText: string, valueText: string) {
+    Column({ space: 2 }) {
+      Text(labelText)
+        .fontSize(10)
+        .fontColor(UI_COLORS.TEXT_WEAK)
+      Text(valueText)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Medium)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .borderRadius(18)
+    .backgroundColor('#AAFFFFFF')
+  }
+
+  @Builder
+  studyBuddyQuoteCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text('\u4ECA\u65E5\u966A\u4F34\u8BED')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Text(`\u201C${this.getDailyCompanionQuote()}\u201D`)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+        .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+        .borderRadius(24)
+        .backgroundColor('#FFF8EE')
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(26)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  moStageCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u5C0Fmo\u6210\u957F\u9636\u6BB5')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(`Lv.${this.getPetLevel()}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PET_PURPLE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.moStageInfo('\u5F53\u524D\u9636\u6BB5', this.getMoStageName(), UI_COLORS.PET_PURPLE)
+        this.moStageInfo('\u4E0B\u4E00\u9636\u6BB5', this.getMoNextStageName(), UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+      CommonProgressBar({ progressPercent: this.getMoStageProgress(), progressBarColor: UI_COLORS.PET_PURPLE, progressTrackColor: UI_COLORS.PINK_LIGHT })
+      Text(this.getMoNextStageText())
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(26)
+    .backgroundColor('#F7F2FF')
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  moStageInfo(labelText: string, valueText: string, color: ResourceColor) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(labelText)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+      Text(valueText)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(color)
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(20)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  moGrowthTasksCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u6210\u957F\u4EFB\u52A1')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(this.getMoTodayCompanionText())
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.PET_PURPLE)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PINK_LIGHT)
+      }
+      .width(Constant.PERCENT_FULL)
+      this.moGrowthTaskRow('\u5B8C\u6210\u4E00\u4E2A\u5F85\u529E', this.todayCompletedCount >= 1,
+        `${this.todayCompletedCount} / 1`)
+      this.moGrowthTaskRow('\u4E13\u6CE8 25 \u5206\u949F', this.todayFocusMinutes >= 25,
+        `${Math.min(this.todayFocusMinutes, 25)} / 25\u5206`)
+      this.moGrowthTaskRow('\u4ECA\u65E5\u6253\u5361', this.hasCheckedToday, this.hasCheckedToday ? '\u5DF2\u6253\u5361' : '\u672A\u6253\u5361')
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(26)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  moGrowthTaskRow(taskName: string, finished: boolean, progressText: string) {
+    Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(finished ? '\u2713' : '\u25CB')
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(finished ? Color.White : UI_COLORS.TEXT_WEAK)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+        .width(28)
+        .height(28)
+        .borderRadius(14)
+        .backgroundColor(finished ? UI_COLORS.MINT : '#F1F3F5')
+      Text(taskName)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Medium)
+        .layoutWeight(1)
+        .maxLines(1)
+      Text(progressText)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(finished ? UI_COLORS.MINT : UI_COLORS.TEXT_SECONDARY)
+        .maxLines(1)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .borderRadius(18)
+    .backgroundColor(finished ? '#F0FAF4' : '#FAFAFA')
+  }
+
+  @Builder
+  moRoomCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u623F\u95F4\u4E3B\u9898')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(this.getStudyRoomName(this.selectedStudyRoomIndex))
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.PET_PURPLE)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PINK_LIGHT)
+      }
+      .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach([0, 1, 2, 3], (roomIndex: number) => {
+          this.studyRoomOption(roomIndex)
+        }, (roomIndex: number) => `${roomIndex}`)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(26)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  studyRoomOption(roomIndex: number) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Stack() {
+        Row()
+          .width(Constant.PERCENT_FULL)
+          .height(52)
+          .borderRadius(16)
+          .backgroundColor(this.getStudyRoomColor(roomIndex))
+        Row()
+          .width(54)
+          .height(16)
+          .borderRadius(8)
+          .backgroundColor(this.getStudyRoomAccentColor(roomIndex))
+          .opacity(0.45)
+          .position({ x: 16, y: 26 })
+        Row()
+          .width(26)
+          .height(26)
+          .borderRadius(13)
+          .backgroundColor('#AAFFFFFF')
+          .position({ x: 86, y: 12 })
+      }
+      .width(Constant.PERCENT_FULL)
+      .height(52)
+      Text(this.getStudyRoomName(roomIndex))
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+      Text(this.getStudyRoomTag(roomIndex))
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .maxLines(1)
+      Text(this.selectedStudyRoomIndex === roomIndex ? '\u5F53\u524D\u4F7F\u7528' : '\u70B9\u51FB\u5207\u6362')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.selectedStudyRoomIndex === roomIndex ? this.getStudyRoomAccentColor(roomIndex) : UI_COLORS.TEXT_WEAK)
+        .fontWeight(this.selectedStudyRoomIndex === roomIndex ? FontWeight.Medium : FontWeight.Regular)
+    }
+    .width('48%')
+    .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+    .padding(14)
+    .borderRadius(22)
+    .backgroundColor(this.selectedStudyRoomIndex === roomIndex ? '#FFFBF4' : '#FAFAFA')
+    .border({
+      width: this.selectedStudyRoomIndex === roomIndex ? 1 : 0,
+      color: this.getStudyRoomAccentColor(roomIndex)
+    })
+      .onClick(() => {
+        this.selectedStudyRoomIndex = roomIndex;
+        this.saveAppState();
+      })
+  }
+
+  @Builder
+  moBadgeCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u6210\u5C31\u5899')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(`${this.getMoAchievementCount()} / 6`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.moBadgeItem('01', '\u7B2C\u4E00\u6B21\u4E13\u6CE8', this.getTotalFocusCount() >= 1)
+        this.moBadgeItem('P1', '\u4ECA\u65E5\u5B8C\u62101\u4E2A\u756A\u8304', this.todayPomodoroCount >= 1)
+        this.moBadgeItem('100', '\u7D2F\u8BA1\u4E13\u6CE8100\u5206\u949F', this.getTotalFocusMinutes() >= 100)
+        this.moBadgeItem('10', '\u5B8C\u621010\u4E2A\u4EFB\u52A1', this.getCompletedCount() >= 10)
+        this.moBadgeItem('3D', '\u8FDE\u7EED\u5B66\u4E603\u5929', this.dailyGoalStreak >= 3)
+        this.moBadgeItem('D1', '\u89E3\u9501\u7B2C\u4E00\u4E2A\u88C5\u626E', this.getOwnedOutfitCount() >= 1)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(26)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  moBadgeItem(iconText: string, label: string, unlocked: boolean) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(iconText)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(unlocked ? Color.White : UI_COLORS.TEXT_WEAK)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+        .width(42)
+        .height(42)
+        .borderRadius(21)
+        .backgroundColor(unlocked ? UI_COLORS.PET_PURPLE : '#E5E7EB')
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(unlocked ? UI_COLORS.TEXT_PRIMARY : UI_COLORS.TEXT_WEAK)
+        .fontWeight(FontWeight.Medium)
+        .maxLines(1)
+      Text(unlocked ? '\u5DF2\u83B7\u5F97' : '\u672A\u83B7\u5F97')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(unlocked ? UI_COLORS.MINT : UI_COLORS.TEXT_WEAK)
+    }
+    .width('48%')
+    .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(22)
+    .backgroundColor(unlocked ? '#FFF8EE' : '#F4F5F6')
+  }
+
+  getMoAchievementCount(): number {
+    let count = 0;
+    if (this.getTotalFocusCount() >= 1) {
+      count += 1;
+    }
+    if (this.todayPomodoroCount >= 1) {
+      count += 1;
+    }
+    if (this.getTotalFocusMinutes() >= 100) {
+      count += 1;
+    }
+    if (this.getCompletedCount() >= 10) {
+      count += 1;
+    }
+    if (this.dailyGoalStreak >= 3) {
+      count += 1;
+    }
+    if (this.getOwnedOutfitCount() >= 1) {
+      count += 1;
+    }
+    return count;
+  }
+
+  @Builder
+  studyBuddyInteractionCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u548C\u5C0Fmo\u4E92\u52A8')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        this.moInteractionButton('\u6478\u6478\u5C0Fmo', UI_COLORS.MINT, () => {
+          this.touchStudyBuddy();
+        })
+        this.moInteractionButton('\u6362\u4E00\u53E5\u8BDD', UI_COLORS.ORANGE, () => {
+          this.touchStudyBuddy();
+        })
+        this.moInteractionButton('\u53BB\u6362\u88C5', UI_COLORS.PET_PURPLE, () => {
+          this.studyBuddyReply = '\u8863\u6A71\u5C31\u5728\u4E0A\u65B9\uFF0C\u4ECA\u5929\u60F3\u6362\u54EA\u4E00\u5957\u5462\uFF1F';
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+      Text(this.studyBuddyReply.length > 0 ? this.studyBuddyReply : '\u8F7B\u8F7B\u70B9\u4E00\u4E0B\uFF0C\u5C0Fmo\u4F1A\u56DE\u5E94\u4F60\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+        .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+        .borderRadius(22)
+        .backgroundColor('#F0FAF4')
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(26)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  moInteractionButton(labelText: string, bgColor: ResourceColor, action: () => void) {
+    Text(labelText)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(Color.White)
+      .fontWeight(FontWeight.Medium)
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .padding({ top: 10, bottom: 10 })
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor(bgColor)
+      .onClick(action)
   }
 
   @Builder
   studyBuddyTodayCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('今日陪伴')
+      Text('\u4ECA\u65E5\u966A\u4F34')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.currentOutfitInfo('专注', this.todayFocusMinutes + '分', UI_COLORS.FOCUS_BLUE)
-        this.currentOutfitInfo('任务', this.todayCompletedCount + '', UI_COLORS.MINT)
+        this.studyBuddyMetric('\u25CC', '\u4E13\u6CE8', this.todayFocusMinutes + '\u5206', UI_COLORS.FOCUS_BLUE)
+        this.studyBuddyMetric('\u2713', '\u4EFB\u52A1', this.todayCompletedCount + '', UI_COLORS.MINT)
+        this.studyBuddyMetric('\u25B3', '\u756A\u8304', this.todayPomodoroCount + '', UI_COLORS.ORANGE)
       }
       .width(Constant.PERCENT_FULL)
-      CommonPill({ pillLabel: this.getStudyBuddyCompanionState(), pillTextColor: UI_COLORS.MINT, pillBgColor: UI_COLORS.MINT_LIGHT })
-      Text(this.getStudyBuddyMessage())
-        .fontSize($r('sys.float.ohos_id_text_size_body1'))
-        .fontColor(UI_COLORS.TEXT_SECONDARY)
-        .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
-    .padding(STYLE_CONFIG.UI_CARD_PADDING)
-    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .padding(22)
+    .borderRadius(24)
     .backgroundColor(Color.White)
-    .shadow({ radius: 10, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 4 })
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  studyBuddyMetric(iconText: string, label: string, value: string, color: ResourceColor) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(iconText)
+        .fontSize(22)
+        .fontColor(color)
+      Text(value)
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+      Text(label)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+    }
+    .layoutWeight(1)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(22)
+    .backgroundColor('#FFFBF4')
   }
 
   @Builder
   studyBuddyGrowthCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('成长进度')
-        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-        .fontColor(UI_COLORS.TEXT_PRIMARY)
-        .fontWeight(FontWeight.Bold)
-        .width(Constant.PERCENT_FULL)
+      Row() {
+        Text('\u6210\u957F\u8FDB\u5EA6')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(`Lv.${this.getPetLevel()}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PET_PURPLE)
+      }
+      .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.currentOutfitInfo('当前等级', 'Lv.' + this.getPetLevel(), UI_COLORS.PET_PURPLE)
-        this.currentOutfitInfo('经验值', this.petExp + '', UI_COLORS.ORANGE)
+        this.currentOutfitInfo('\u7ECF\u9A8C', this.petExp + '', UI_COLORS.ORANGE)
+        this.currentOutfitInfo('\u8DDD\u4E0B\u4E00\u7EA7', this.getPetExpToNextLevel() === 0 ? '\u5DF2\u6EE1\u7EA7' : this.getPetExpToNextLevel() + '', UI_COLORS.PET_PURPLE)
+        this.currentOutfitInfo('\u79EF\u5206', this.score + '', UI_COLORS.MINT)
       }
       .width(Constant.PERCENT_FULL)
       CommonProgressBar({ progressPercent: this.getPetProgress(), progressBarColor: UI_COLORS.PET_PURPLE, progressTrackColor: UI_COLORS.PINK_LIGHT })
-      Text(this.getPetExpToNextLevel() === 0 ? '已达到当前最高等级' : '距离下一级还差 ' + this.getPetExpToNextLevel() + ' 经验')
+      Text(this.getPetExpToNextLevel() === 0 ? '\u5DF2\u8FBE\u5230\u5F53\u524D\u6700\u9AD8\u7B49\u7EA7' : '\u518D\u6536\u96C6 ' + this.getPetExpToNextLevel() + ' \u7ECF\u9A8C\u5C31\u80FD\u5347\u7EA7')
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -4412,16 +7846,18 @@ struct ToDoList {
   @Builder
   studyBuddyActionsCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('互动')
+      Text('\u966A\u4F34\u884C\u52A8')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        CommonPill({ pillLabel: '💬 换一句', pillTextColor: Color.White, pillBgColor: UI_COLORS.MINT })
-          .onClick(() => { this.showToastMessage(this.getStudyBuddyHealingQuote()); })
-        CommonPill({ pillLabel: '🎀 查看装扮', pillTextColor: Color.White, pillBgColor: UI_COLORS.PET_PURPLE })
-          .onClick(() => { this.currentTab = 7; })
+        CommonPill({ pillLabel: '\u6253\u5361', pillTextColor: Color.White, pillBgColor: UI_COLORS.MINT })
+          .onClick(() => { this.checkInToday(); })
+        CommonPill({ pillLabel: '\u5F00\u59CB\u4E13\u6CE8', pillTextColor: Color.White, pillBgColor: UI_COLORS.FOCUS_BLUE })
+          .onClick(() => { this.currentTab = 3; })
+        CommonPill({ pillLabel: '\u8863\u67DC', pillTextColor: Color.White, pillBgColor: UI_COLORS.PET_PURPLE })
+          .onClick(() => { this.showToastMessage('\u8863\u67DC\u5F00\u53D1\u4E2D'); })
       }
       .width(Constant.PERCENT_FULL)
       .justifyContent(FlexAlign.Center)
@@ -4467,7 +7903,7 @@ struct ToDoList {
   @Builder
   currentOutfitCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\uD83C\uDF08 \u5F53\u524D\u642D\u914D')
+      Text('\u5F53\u524D\u642D\u914D')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -4478,7 +7914,7 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.currentOutfitInfo('\u5BA0\u7269\u7B49\u7EA7', `Lv.${this.getPetLevel()} ${this.getPetName()}`, UI_COLORS.MINT)
+        this.currentOutfitInfo('\u4F19\u4F34\u7B49\u7EA7', `Lv.${this.getPetLevel()} ${this.getPetName()}`, UI_COLORS.MINT)
         this.currentOutfitInfo('\u6536\u85CF\u8FDB\u5EA6', `${this.getOwnedOutfitCount()} / ${this.outfitNames.length}`, UI_COLORS.ORANGE)
       }
       .width(Constant.PERCENT_FULL)
@@ -4575,14 +8011,110 @@ struct ToDoList {
 
   @Builder
   profilePage() {
-    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      this.profileHeroCard()
-      this.studyIdentityCard()
-      this.profileInfoCard()
-      this.themeStore()
-      this.dataManagementCard()
+    if (this.isWideScreen) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.profileSettingsCard()
+          this.focusPreferencesCard()
+          this.profileInfoCard()
+          this.profileCrossDeviceCard()
+          this.dataManagementCard()
+          this.profileAboutPrivacyCard()
+        }
+        .layoutWeight(46)
+        .constraintSize({ maxWidth: 560 })
+        .alignSelf(ItemAlign.Start)
+        Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.profileTodayOverviewCard()
+          this.profileBuddyCard()
+          this.themeStore()
+          this.profileEntryGrid()
+        }
+        .layoutWeight(54)
+        .constraintSize({ maxWidth: 660 })
+        .alignSelf(ItemAlign.Start)
+      }
+      .width(Constant.PERCENT_FULL)
+      .alignItems(VerticalAlign.Top)
+    } else {
+      Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.profileSettingsCard()
+        this.focusPreferencesCard()
+        this.themeStore()
+        this.profileInfoCard()
+        this.profileCrossDeviceCard()
+        this.dataManagementCard()
+        this.profileAboutPrivacyCard()
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+  }
+
+  @Builder
+  petSimpleMetricsCard() {
+    Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.currentOutfitInfo('\u79EF\u5206', `${this.score}`, UI_COLORS.ORANGE)
+      this.currentOutfitInfo('\u6210\u957F\u503C', `${this.petExp}`, UI_COLORS.PET_PURPLE)
     }
     .width(Constant.PERCENT_FULL)
+  }
+
+  @Builder
+  petRoomAtmosphereCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u623F\u95F4\u6C1B\u56F4')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text('\u5C55\u793A')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.PET_PURPLE)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PINK_LIGHT)
+      }
+      .width(Constant.PERCENT_FULL)
+      Text('\u9009\u4E00\u4E2A\u559C\u6B22\u7684\u5B66\u4E60\u573A\u666F\uFF0C\u5148\u4F5C\u4E3A\u6C1B\u56F4\u5C55\u793A\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        this.petRoomAtmosphereItem('\u2615', '\u5976\u6CB9\u4E66\u684C', '\u6E29\u67D4\u5F00\u59CB', UI_COLORS.CREAM_WHITE)
+        this.petRoomAtmosphereItem('\uD83C\uDF19', '\u6DF1\u591C\u81EA\u4E60\u5BA4', '\u5B89\u9759\u6C89\u6D78', UI_COLORS.BLUE_LIGHT)
+        this.petRoomAtmosphereItem('\u2600\uFE0F', '\u6E05\u6668\u7A97\u8FB9', '\u6E05\u65B0\u8F7B\u5FEB', UI_COLORS.MINT_LIGHT)
+        this.petRoomAtmosphereItem('\u2728', '\u661F\u7A7A\u623F\u95F4', '\u653E\u677E\u6536\u5C3E', UI_COLORS.PINK_LIGHT)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(22)
+    .borderRadius(24)
+    .backgroundColor(Color.White)
+    .shadow({ radius: 16, color: '#10000000', offsetX: 0, offsetY: 6 })
+  }
+
+  @Builder
+  petRoomAtmosphereItem(iconText: string, title: string, subtitle: string, bgColor: ResourceColor) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(iconText)
+        .fontSize(28)
+      Text(title)
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+      Text(subtitle)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .maxLines(1)
+    }
+    .width('48%')
+    .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_MEDIUM)
+    .backgroundColor(bgColor)
   }
 
   @Builder
@@ -4593,7 +8125,7 @@ struct ToDoList {
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
-      Text('\u4E3B\u9898\u3001\u79EF\u5206\u3001\u6570\u636E\u90FD\u5728\u8FD9\u91CC')
+      Text('\u4E3B\u9898\u3001\u6570\u636E\u548C\u540C\u6B65\u8BBE\u7F6E\u90FD\u6536\u5728\u8FD9\u91CC')
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -4607,7 +8139,7 @@ struct ToDoList {
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
     .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
-    .backgroundColor(UI_COLORS.CREAM_WHITE)
+    .backgroundColor('#FFF8EE')
     .shadow({
       radius: 12,
       color: UI_COLORS.CARD_SHADOW,
@@ -4666,42 +8198,277 @@ struct ToDoList {
   }
 
   @Builder
-  petMiniCard() {
-    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\u5B66\u4E60\u642D\u5B50')
+  profileSettingsCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u8BBE\u7F6E')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      this.deliveryStatusRow('\u5F53\u524D\u4E3B\u9898', this.themeNames[this.themeIndex])
+      this.deliveryStatusRow('\u5B66\u4E60\u79F0\u53F7', this.getLearningTitle())
+      this.deliveryStatusRow('\u4F19\u4F34\u7B49\u7EA7', `Lv.${this.getPetLevel()} ${this.getPetName()}`)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  focusPreferencesCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u4E13\u6CE8\u504F\u597D')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Text('\u4E13\u6CE8\u4E3B\u9898\u989C\u8272')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.focusRoomNames, (themeName: string, index: number) => {
+          this.focusPreferencePill(themeName, index === this.focusThemeIndex, this.focusRoomAccentColors[index], () => {
+            this.focusThemeIndex = index;
+            this.saveAppState();
+          })
+        }, (themeName: string) => themeName)
+      }
+      .width(Constant.PERCENT_FULL)
+      Text('\u65F6\u949F\u6837\u5F0F')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.focusClockStyleNames, (styleName: string, index: number) => {
+          this.focusPreferencePill(styleName, index === this.focusClockStyleIndex, UI_COLORS.FOCUS_BLUE, () => {
+            this.focusClockStyleIndex = index;
+            this.saveAppState();
+          })
+        }, (styleName: string) => styleName)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(UI_COLORS.BLUE_LIGHT)
+  }
+
+  @Builder
+  focusPreferencePill(label: string, isSelected: boolean, selectedColor: ResourceColor, action: () => void) {
+    Text(label)
+      .fontSize($r('sys.float.ohos_id_text_size_body2'))
+      .fontColor(isSelected ? Color.White : UI_COLORS.TEXT_SECONDARY)
+      .padding({
+        left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+        right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+        top: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
+        bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
+      })
+      .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
+      .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+      .backgroundColor(isSelected ? selectedColor : Color.White)
+      .onClick(action)
+  }
+
+  @Builder
+  profileCrossDeviceCard() {
+    Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u8DE8\u8BBE\u5907')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .width(Constant.PERCENT_FULL)
+        Text('\u4EFB\u52A1\u6295\u9001\u3001\u8BBE\u5907\u72B6\u6001\u548C\u540C\u6B65\u8BB0\u5F55')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .width(Constant.PERCENT_FULL)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      Text('\u8FDB\u5165')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(Color.White)
+        .padding({
+          left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(UI_COLORS.FOCUS_BLUE)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(UI_COLORS.BLUE_LIGHT)
+    .onClick(() => {
+      this.currentTab = 6;
+    })
+  }
+
+  @Builder
+  profileAboutPrivacyCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u5173\u4E8E\u4E0E\u9690\u79C1')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      this.deliveryStatusRow('\u5173\u4E8E', '\u4E13\u6CE8\u3001\u4EFB\u52A1\u548C\u5C0Fmo\u966A\u4F34\u7684\u672C\u5730\u5B66\u4E60\u7A7A\u95F4')
+      this.deliveryStatusRow('\u9690\u79C1\u8BF4\u660E', '\u6570\u636E\u4F18\u5148\u4FDD\u5B58\u5728\u672C\u5730\uFF0C\u8DE8\u8BBE\u5907\u4EC5\u5728\u4F60\u4E3B\u52A8\u6295\u9001\u65F6\u4F7F\u7528')
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#F6F1FF')
+  }
+
+  @Builder
+  profileTodayOverviewCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u4ECA\u65E5\u6982\u89C8')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        Text(this.getPetEmoji())
-          .fontSize(40)
+        this.currentOutfitInfo('\u4E13\u6CE8', `${this.todayFocusMinutes}\u5206`, UI_COLORS.FOCUS_BLUE)
+        this.currentOutfitInfo('\u756A\u8304', `${this.todayPomodoroCount}`, UI_COLORS.ORANGE)
+        this.currentOutfitInfo('\u4EFB\u52A1', `${this.todayCompletedCount}`, UI_COLORS.MINT)
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  profileEntryGrid() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text('\u6211\u7684\u5B66\u4E60\u7A7A\u95F4')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.profileEntryCard('\u5B66\u4E60\u7EDF\u8BA1', '\u8D8B\u52BF\u548C\u5706\u76D8\u56FE', UI_COLORS.PINK_LIGHT, () => {
+          this.currentTab = 4;
+        })
+        this.profileEntryCard('\u5C0Fmo\u7A7A\u95F4', '\u4F19\u4F34\u548C\u88C5\u626E', UI_COLORS.MINT_LIGHT, () => {
+          this.currentTab = 5;
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.profileEntryCard('\u4E3B\u9898\u88C5\u626E', this.themeNames[this.themeIndex], UI_COLORS.CREAM_WHITE, () => {
+          this.currentTab = 5;
+        })
+        this.profileEntryCard('\u8DE8\u8BBE\u5907', '\u6295\u9001\u4E0E\u540C\u6B65', UI_COLORS.BLUE_LIGHT, () => {
+          this.currentTab = 6;
+        })
+      }
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+  }
+
+  @Builder
+  profileEntryCard(title: string, subtitle: string, cardBgColor: ResourceColor, action: () => void) {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text(title)
+        .fontSize($r('sys.float.ohos_id_text_size_body1'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Medium)
+        .maxLines(1)
+      Text(subtitle)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_MEDIUM)
+    .backgroundColor(cardBgColor)
+    .onClick(action)
+  }
+
+  @Builder
+  profileBuddyCard() {
+    Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      this.moOutfitAvatar(70)
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(`${this.getStudyBuddyName()} · Lv.${this.getPetLevel()}`)
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .maxLines(1)
+        Text(this.getStudyBuddyCompanionState())
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.MINT)
+          .maxLines(1)
+        Text(this.getStudyBuddyMessage())
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .maxLines(2)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(UI_COLORS.MINT_LIGHT)
+    .onClick(() => {
+      this.currentTab = 5;
+    })
+  }
+
+  @Builder
+  petMiniCard() {
+    Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+      Text('\u5C0Fmo')
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(UI_COLORS.TEXT_PRIMARY)
+        .fontWeight(FontWeight.Bold)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.moOutfitAvatar(68)
         Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-          Text(`${this.getStudyBuddyName()} · Lv.${this.getPetLevel()}`)
-            .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-            .fontColor(this.getThemeColor())
           Text(this.getStudyBuddyMood())
+            .fontSize($r('sys.float.ohos_id_text_size_body1'))
+            .fontColor(UI_COLORS.MINT)
+            .fontWeight(FontWeight.Medium)
+          Text(this.getStudyBuddyMessage())
             .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .maxLines(2)
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
       }
-      Row() {
-        Row()
-          .height(8)
-          .width(`${this.getPetProgress()}%`)
-          .borderRadius(4)
-          .backgroundColor(this.getThemeColor())
-      }
-      .width(Constant.PERCENT_FULL)
-      .height(8)
-      .borderRadius(4)
-      .backgroundColor(Color.White)
-      Text(this.getStudyBuddyMessage())
+      Text('\u8FDB\u5165\u5C0Fmo\u7A7A\u95F4')
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
-        .fontColor(UI_COLORS.TEXT_SECONDARY)
-        .width(Constant.PERCENT_FULL)
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .padding({
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          right: STYLE_CONFIG.LIST_ITEM_GUTTER
+        })
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(UI_COLORS.PET_PURPLE)
+      .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
@@ -4795,23 +8562,353 @@ struct ToDoList {
     return this.getOpenTodosWithDeadline().filter((item: ToDo) => item.deadline > endOfWeek);
   }
 
+  getCalendarMonthStartTime(): number {
+    let dateValue = new Date();
+    dateValue.setMonth(dateValue.getMonth() + this.calendarMonthOffset, 1);
+    dateValue.setHours(0, 0, 0, 0);
+    return dateValue.getTime();
+  }
+
+  getCalendarMonthTitle(): string {
+    let dateValue = new Date(this.getCalendarMonthStartTime());
+    return `${dateValue.getFullYear()}\u5E74${dateValue.getMonth() + 1}\u6708`;
+  }
+
+  getCalendarGridTimestamp(index: number): number {
+    let monthStart = new Date(this.getCalendarMonthStartTime());
+    let firstWeekday = monthStart.getDay();
+    return this.getCalendarMonthStartTime() - firstWeekday * 24 * 60 * 60 * 1000 + index * 24 * 60 * 60 * 1000;
+  }
+
+  getSelectedCalendarStart(): number {
+    if (this.selectedCalendarDate > 0) {
+      return this.getStartOfDay(this.selectedCalendarDate);
+    }
+    if (this.calendarMonthOffset === 0) {
+      return this.getTodayStart();
+    }
+    return this.getCalendarMonthStartTime();
+  }
+
+  isCalendarCurrentMonth(index: number): boolean {
+    let cellDate = new Date(this.getCalendarGridTimestamp(index));
+    let monthDate = new Date(this.getCalendarMonthStartTime());
+    return cellDate.getFullYear() === monthDate.getFullYear() && cellDate.getMonth() === monthDate.getMonth();
+  }
+
+  isCalendarToday(index: number): boolean {
+    return this.getStartOfDay(this.getCalendarGridTimestamp(index)) === this.getTodayStart();
+  }
+
+  isCalendarSelected(index: number): boolean {
+    return this.getStartOfDay(this.getCalendarGridTimestamp(index)) === this.getSelectedCalendarStart();
+  }
+
+  getCalendarCellTextColor(index: number): ResourceColor {
+    if (this.isCalendarSelected(index)) {
+      return Color.White;
+    }
+    if (this.isCalendarToday(index)) {
+      return this.getThemeColor();
+    }
+    if (!this.isCalendarCurrentMonth(index)) {
+      return UI_COLORS.TEXT_WEAK;
+    }
+    return UI_COLORS.TEXT_PRIMARY;
+  }
+
+  getCalendarCellBgColor(index: number): ResourceColor {
+    if (this.isCalendarSelected(index)) {
+      return this.getThemeColor();
+    }
+    if (this.isCalendarToday(index)) {
+      return this.getThemeLightColor();
+    }
+    return '#00FFFFFF';
+  }
+
+  getTodosByCalendarDate(timestamp: number): ToDo[] {
+    let targetDay = this.getStartOfDay(timestamp);
+    let items = this.getAllTodos().filter((item: ToDo) => item.deadline > 0 && this.getStartOfDay(item.deadline) === targetDay);
+    items.sort((firstItem: ToDo, secondItem: ToDo) => {
+      if (firstItem.isCompleted !== secondItem.isCompleted) {
+        return Number(firstItem.isCompleted) - Number(secondItem.isCompleted);
+      }
+      return secondItem.priority - firstItem.priority;
+    });
+    return items;
+  }
+
+  getCalendarTaskCount(index: number): number {
+    return this.getTodosByCalendarDate(this.getCalendarGridTimestamp(index)).length;
+  }
+
+  getCalendarOpenTaskCount(index: number): number {
+    return this.getTodosByCalendarDate(this.getCalendarGridTimestamp(index))
+      .filter((item: ToDo) => !item.isCompleted).length;
+  }
+
+  getCalendarDotColor(dayIndex: number, dotIndex: number): string {
+    let items = this.getTodosByCalendarDate(this.getCalendarGridTimestamp(dayIndex));
+    if (dotIndex < 0 || dotIndex >= items.length) {
+      return STYLE_COLORS.LIGHT_GRAY_TEXT;
+    }
+    let item = items[dotIndex];
+    if (item.isCompleted) {
+      return STYLE_COLORS.LIGHT_GRAY_TEXT;
+    }
+    if (item.taskType === 'once') {
+      return STYLE_COLORS.PRIORITY_LOW;
+    }
+    if (item.taskType === 'habit') {
+      return STYLE_COLORS.ACCENT_GREEN;
+    }
+    return STYLE_COLORS.ACCENT_PURPLE;
+  }
+
+  getTaskTypeText(taskType: string): string {
+    if (taskType === 'once') {
+      return '\u4E00\u6B21\u6027';
+    }
+    if (taskType === 'habit') {
+      return '\u4E60\u60EF';
+    }
+    return '\u4E13\u6CE8';
+  }
+
+  getTaskTypeColor(taskType: string): string {
+    if (taskType === 'once') {
+      return STYLE_COLORS.PRIORITY_LOW;
+    }
+    if (taskType === 'habit') {
+      return STYLE_COLORS.ACCENT_GREEN;
+    }
+    return STYLE_COLORS.ACCENT_PURPLE;
+  }
+
+  getCountdownTodo(): ToDo | null {
+    let items = this.getOpenTodosWithDeadline();
+    if (items.length === 0) {
+      return null;
+    }
+    return items[0];
+  }
+
+  getSelectedCalendarTitle(): string {
+    let dateValue = new Date(this.getSelectedCalendarStart());
+    if (this.getSelectedCalendarStart() === this.getTodayStart()) {
+      return '\u4ECA\u5929\u7684\u4EE3\u529E';
+    }
+    return `${dateValue.getMonth() + 1}\u6708${dateValue.getDate()}\u65E5\u7684\u4EE3\u529E`;
+  }
+
+  getWeekdayLabel(index: number): string {
+    let labels: string[] = ['\u65E5', '\u4E00', '\u4E8C', '\u4E09', '\u56DB', '\u4E94', '\u516D'];
+    return labels[index];
+  }
+
   @Builder
   countdownCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\u6700\u8FD1\u622A\u6B62')
+      Text('\u6700\u8FD1\u5012\u8BA1\u65F6')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
-      if (this.getUpcomingTodos().length === 0) {
-        Text('\u6682\u65E0\u5373\u5C06\u622A\u6B62\u7684\u4EFB\u52A1')
+      if (this.getCountdownTodo() === null) {
+        Text('\u8FD8\u6CA1\u6709\u5012\u8BA1\u65F6\u4EFB\u52A1\uFF0C\u7ED9\u4EE3\u529E\u8BBE\u7F6E\u622A\u6B62\u65E5\u671F\u5427\u3002')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .width(Constant.PERCENT_FULL)
+      } else {
+        ForEach(this.getOpenTodosWithDeadline().slice(0, 1), (item: ToDo) => {
+          this.countdownTaskCard(item)
+        }, (item: ToDo) => item.key)
+      }
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+    .shadow({
+      radius: 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  @Builder
+  countdownTaskCard(item: ToDo) {
+    Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text(`\u8DDD\u79BB ${item.name}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body1'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .maxLines(1)
+          .width(Constant.PERCENT_FULL)
+        Text(`${this.getDeadlineDateText(item.deadline)} \u00B7 ${this.getDeadlineStatusNote(item.deadline)}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(UI_COLORS.TEXT_SECONDARY)
+          .maxLines(1)
+          .width(Constant.PERCENT_FULL)
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      Text(this.getDeadlineText(item.deadline))
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .padding({
+          left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
+        })
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(this.getDeadlineStatusColor(item.deadline, item.isCompleted))
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.LIST_ITEM_GUTTER)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor('#FFF8EE')
+    .onClick(() => {
+      this.showTodoDetail(item);
+    })
+  }
+
+  @Builder
+  calendarMonthGridCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        Text('\u2039')
+          .fontSize(26)
+          .fontColor(this.getThemeColor())
+          .textAlign(TextAlign.Center)
+          .width(36)
+          .height(36)
+          .borderRadius(18)
+          .backgroundColor(this.getThemeLightColor())
+          .onClick(() => {
+            this.calendarMonthOffset -= 1;
+            this.selectedCalendarDate = 0;
+          })
+        Text(this.getCalendarMonthTitle())
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+        Text('\u203A')
+          .fontSize(26)
+          .fontColor(this.getThemeColor())
+          .textAlign(TextAlign.Center)
+          .width(36)
+          .height(36)
+          .borderRadius(18)
+          .backgroundColor(this.getThemeLightColor())
+          .onClick(() => {
+            this.calendarMonthOffset += 1;
+            this.selectedCalendarDate = 0;
+          })
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        ForEach([0, 1, 2, 3, 4, 5, 6], (weekdayIndex: number) => {
+          Text(this.getWeekdayLabel(weekdayIndex))
+            .fontSize($r('sys.float.ohos_id_text_size_body2'))
+            .fontColor(UI_COLORS.TEXT_SECONDARY)
+            .textAlign(TextAlign.Center)
+            .layoutWeight(1)
+        }, (weekdayIndex: number) => `${weekdayIndex}`)
+      }
+      .width(Constant.PERCENT_FULL)
+      Grid() {
+        ForEach([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+          14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+          28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41], (dayIndex: number) => {
+          GridItem() {
+            this.calendarDayCell(dayIndex)
+          }
+        }, (dayIndex: number) => `${dayIndex}`)
+      }
+      .columnsTemplate('1fr 1fr 1fr 1fr 1fr 1fr 1fr')
+      .rowsGap(STYLE_CONFIG.ICON_GUTTER)
+      .columnsGap(STYLE_CONFIG.ICON_GUTTER)
+      .width(Constant.PERCENT_FULL)
+      .height(312)
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+    .shadow({
+      radius: 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  @Builder
+  calendarDayCell(dayIndex: number) {
+    Column({ space: 2 }) {
+      Text(`${new Date(this.getCalendarGridTimestamp(dayIndex)).getDate()}`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(this.getCalendarCellTextColor(dayIndex))
+        .fontWeight(this.isCalendarToday(dayIndex) || this.isCalendarSelected(dayIndex) ? FontWeight.Bold : FontWeight.Regular)
+        .textAlign(TextAlign.Center)
+      Row({ space: 2 }) {
+        ForEach([0, 1, 2], (dotIndex: number) => {
+          if (dotIndex < this.getCalendarTaskCount(dayIndex)) {
+            Row()
+              .width(5)
+              .height(5)
+              .borderRadius(3)
+              .backgroundColor(this.getCalendarDotColor(dayIndex, dotIndex))
+          }
+        }, (dotIndex: number) => `${dotIndex}`)
+      }
+      .height(10)
+      .justifyContent(FlexAlign.Center)
+      .width(Constant.PERCENT_FULL)
+    }
+    .width(Constant.PERCENT_FULL)
+    .height(44)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_MEDIUM)
+    .backgroundColor(this.getCalendarCellBgColor(dayIndex))
+    .opacity(this.isCalendarCurrentMonth(dayIndex) ? 1 : 0.45)
+    .onClick(() => {
+      this.selectedCalendarDate = this.getCalendarGridTimestamp(dayIndex);
+    })
+  }
+
+  @Builder
+  selectedCalendarTasksCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text(this.getSelectedCalendarTitle())
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(`${this.getTodosByCalendarDate(this.getSelectedCalendarStart()).length}`)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getThemeColor())
+      }
+      .width(Constant.PERCENT_FULL)
+      if (this.getTodosByCalendarDate(this.getSelectedCalendarStart()).length === 0) {
+        Text('\u8FD9\u4E00\u5929\u8FD8\u6CA1\u6709\u622A\u6B62\u7684\u4EE3\u529E\u3002')
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(UI_COLORS.TEXT_SECONDARY)
           .width(Constant.PERCENT_FULL)
       }
-      ForEach(this.getUpcomingTodos(), (item: ToDo) => {
+      ForEach(this.getTodosByCalendarDate(this.getSelectedCalendarStart()), (item: ToDo) => {
         this.calendarTaskRow(item)
-      }, (item: ToDo) => item.key)
+      }, (item: ToDo) => `${item.key}_${item.isCompleted}`)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
@@ -4870,17 +8967,19 @@ struct ToDoList {
           .fontColor(item.isCompleted ? UI_COLORS.TEXT_WEAK : UI_COLORS.TEXT_PRIMARY)
           .fontWeight(FontWeight.Medium)
           .maxLines(1)
-        Text(`${this.getPriorityName(item.priority)} 路 ${this.getDeadlineDateText(item.deadline)}`)
+        Text(`${this.getPriorityName(item.priority)} \u00B7 ${this.getDeadlineDateText(item.deadline)}`)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(UI_COLORS.TEXT_SECONDARY)
+        Text(this.getTaskTypeText(item.taskType))
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.getTaskTypeColor(item.taskType))
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
       Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
         Text(item.isCompleted ? '\u5DF2\u5B8C\u6210' : this.getDeadlineText(item.deadline))
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor(item.isCompleted ? UI_COLORS.TEXT_WEAK :
-            (this.getDeadlineText(item.deadline).startsWith('\u5DF2\u903E\u671F') ? '#D94838' : UI_COLORS.FOCUS_BLUE))
+          .fontColor(this.getDeadlineStatusColor(item.deadline, item.isCompleted))
         Text(this.getPriorityText(item.priority))
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(Color.White)
@@ -4891,7 +8990,7 @@ struct ToDoList {
             bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
           })
           .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-          .backgroundColor(item.priority >= 2 ? '#D94838' : (item.priority === 1 ? UI_COLORS.ORANGE : UI_COLORS.MINT))
+          .backgroundColor(this.getPriorityColor(item.priority))
       }
     }
     .width(Constant.PERCENT_FULL)
@@ -5003,7 +9102,7 @@ struct ToDoList {
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       this.deliveryStatusRow('Preferences', '\u672C\u5730\u6301\u4E45\u5316\uFF0CApp \u91CD\u542F\u540E\u53EF\u6062\u590D')
-      this.deliveryStatusRow('\u4ECA\u65E5\u72B6\u6001', '\u6309\u65E5\u671F\u81EA\u52A8\u91CD\u7F6E\u756A\u8304/\u76EE\u6807\u8FDB\u5EA6')
+      this.deliveryStatusRow('\u65E5\u7A0B\u72B6\u6001', '\u6309\u65E5\u671F\u81EA\u52A8\u91CD\u7F6E\u756A\u8304/\u76EE\u6807\u8FDB\u5EA6')
       this.deliveryStatusRow('\u6295\u9001\u72B6\u6001', '\u6700\u8FD1\u53D1\u9001/\u63A5\u6536\u8BB0\u5F55\u4F1A\u4FDD\u5B58')
       this.deliveryStatusRow('\u5F53\u524D\u4E3B\u9898', this.themeNames[this.themeIndex])
     }
@@ -5028,7 +9127,7 @@ struct ToDoList {
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       this.deliveryStatusRow('\u672C\u5730\u4FDD\u5B58', '\u6570\u636E\u5DF2\u672C\u5730\u4FDD\u5B58')
-      this.deliveryStatusRow('\u4ECA\u65E5\u76EE\u6807\u65E5\u671F', this.dailyGoalDate.length > 0 ? this.dailyGoalDate : this.getTodayString())
+      this.deliveryStatusRow('\u76EE\u6807\u65E5\u671F', this.dailyGoalDate.length > 0 ? this.dailyGoalDate : this.getTodayString())
       this.deliveryStatusRow('\u5DF2\u62E5\u6709\u88C5\u626E', `${this.getOwnedOutfitCount()} / ${this.outfitNames.length}`)
       this.deliveryStatusRow('\u6295\u9001\u53BB\u91CD\u8BB0\u5F55', `${this.receivedTransferIds.length}`)
       Text('\u91CD\u7F6E\u4ECA\u65E5\u76EE\u6807')
@@ -5093,31 +9192,7 @@ struct ToDoList {
         .backgroundColor(this.getFocusRoomBackgroundColor())
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       } else {
-        Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-          Text($r('app.string.todo'))
-            .fontSize($r('sys.float.ohos_id_text_size_headline7'))
-            .fontColor(this.getThemeColor())
-          Blank()
-          Image($r('app.media.ic_public_add_filled'))
-            .width(STYLE_CONFIG.MENU_IMAGE_SIZE)
-            .aspectRatio(1)
-            .onClick(() => {
-              this.showAddTodoDialog();
-            })
-        }
-        .height(Constant.PERCENT_12)
-        .width(Constant.PERCENT_FULL)
-        .padding({
-          left: $r('sys.float.ohos_id_max_padding_start'),
-          right: $r('sys.float.ohos_id_max_padding_end'),
-        })
-        .margin({
-          left: STYLE_CONFIG.LIST_ITEM_GUTTER,
-          right: STYLE_CONFIG.LIST_ITEM_GUTTER,
-          top: STYLE_CONFIG.LIST_ITEM_GUTTER
-        })
-        .borderRadius($r('sys.float.ohos_id_corner_radius_default_m'))
-        .backgroundColor(Color.White)
+        this.pageHeader()
 
         if (this.isWideScreen) {
           Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
@@ -5158,6 +9233,128 @@ struct ToDoList {
     })
   }
 
+  getPageHeaderTitle(): string {
+    if (this.currentTab === 0) {
+      return '\u4EE3\u529E';
+    }
+    if (this.currentTab === 1) {
+      return '\u4EFB\u52A1\u6E05\u5355';
+    }
+    if (this.currentTab === 2) {
+      return '\u65E5\u5386';
+    }
+    if (this.currentTab === 3) {
+      return '\u4E13\u6CE8\u72B6\u6001';
+    }
+    if (this.currentTab === 4) {
+      return '\u7EDF\u8BA1';
+    }
+    if (this.currentTab === 5) {
+      return '\u5C0Fmo\u7A7A\u95F4';
+    }
+    if (this.currentTab === 6) {
+      return '\u8DE8\u8BBE\u5907';
+    }
+    if (this.currentTab === 7) {
+      return '\u6211\u7684';
+    }
+    return '\u4EE3\u529E';
+  }
+
+  getPageHeaderSubtitle(): string {
+    if (this.currentTab === 0) {
+      return `\u8FD8\u6709 ${this.getUncompletedCount()} \u4EF6\u4EE3\u529E\uFF0C\u70B9\u51FB\u4EFB\u52A1\u5F00\u59CB\u4E13\u6CE8`;
+    }
+    if (this.currentTab === 1) {
+      return '\u6536\u62FE\u4EFB\u52A1\uFF0C\u4ECE\u4E00\u4EF6\u5C0F\u4E8B\u5F00\u59CB';
+    }
+    if (this.currentTab === 2) {
+      return '\u622A\u6B62\u65E5\u3001\u5012\u8BA1\u65F6\u548C\u6708\u5386\u89C6\u56FE';
+    }
+    if (this.currentTab === 3) {
+      return '\u9009\u4E00\u4E2A\u4EFB\u52A1\uFF0C\u518D\u8FDB\u5165\u6C89\u6D78\u4E13\u6CE8';
+    }
+    if (this.currentTab === 4) {
+      return '\u4F60\u7684\u4E13\u6CE8\u6B63\u5728\u6162\u6162\u53D8\u6210\u6210\u957F';
+    }
+    if (this.currentTab === 5) {
+      return '\u5C0Fmo\u966A\u4F60\u4E00\u8D77\u5B66\u4E60\u548C\u6210\u957F';
+    }
+    if (this.currentTab === 6) {
+      return '\u4EFB\u52A1\u6295\u9001\u548C\u8BBE\u5907\u72B6\u6001';
+    }
+    if (this.currentTab === 7) {
+      return '\u8BBE\u7F6E\u4E0E\u6570\u636E';
+    }
+    return this.getTodayDisplayText();
+  }
+
+  isTaskEntryPage(): boolean {
+    return this.currentTab === 0 || this.currentTab === 1;
+  }
+
+  getPageHeaderBgColor(): ResourceColor {
+    if (this.currentTab === 2) {
+      return '#F6F1FF';
+    }
+    if (this.currentTab === 4) {
+      return '#FFF1F5';
+    }
+    if (this.currentTab === 5) {
+      return UI_COLORS.MINT_LIGHT;
+    }
+    if (this.currentTab === 7) {
+      return UI_COLORS.CREAM_WHITE;
+    }
+    return Color.White;
+  }
+
+  isNavIndexSelected(index: number): boolean {
+    if (index === 7) {
+      return this.currentTab === 7 || this.currentTab === 6;
+    }
+    return this.currentTab === index;
+  }
+
+  @Builder
+  pageHeader() {
+    Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Text(this.getPageHeaderTitle())
+        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+        .fontColor(this.getThemeColor())
+        .fontWeight(FontWeight.Bold)
+        .maxLines(1)
+        .layoutWeight(1)
+      if (this.isTaskEntryPage()) {
+        Image($r('app.media.ic_public_add_filled'))
+          .width(STYLE_CONFIG.MENU_IMAGE_SIZE)
+          .aspectRatio(1)
+          .onClick(() => {
+            this.showAddTodoDialog();
+          })
+      }
+    }
+    .height(52)
+    .width(Constant.PERCENT_FULL)
+    .padding({
+      left: STYLE_CONFIG.UI_CARD_PADDING,
+      right: STYLE_CONFIG.UI_CARD_PADDING
+    })
+    .margin({
+      left: STYLE_CONFIG.LIST_ITEM_GUTTER,
+      right: STYLE_CONFIG.LIST_ITEM_GUTTER,
+      top: STYLE_CONFIG.LIST_ITEM_GUTTER
+    })
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(this.getPageHeaderBgColor())
+    .shadow({
+      radius: 8,
+      color: '#0D0D1F18',
+      offsetX: 0,
+      offsetY: 2
+    })
+  }
+
   @Builder
   sideNavigation() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
@@ -5181,27 +9378,28 @@ struct ToDoList {
         }, (tabIndex: number) => `${tabIndex}`)
       }
       .width(Constant.PERCENT_FULL)
+      .height(62)
       .padding({
         left: STYLE_CONFIG.UI_NAV_PADDING,
         right: STYLE_CONFIG.UI_NAV_PADDING,
-        top: STYLE_CONFIG.UI_NAV_PADDING,
-        bottom: STYLE_CONFIG.UI_NAV_PADDING
+        top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+        bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
       })
       .margin({
         top: STYLE_CONFIG.ICON_GUTTER,
         bottom: STYLE_CONFIG.ICON_GUTTER
       })
       .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-      .backgroundColor('#EFFFFFFF')
+      .backgroundColor('#FAFFFFFF')
       .border({
         width: 1,
-        color: '#66FFFFFF'
+        color: '#30FFFFFF'
       })
       .shadow({
-        radius: 22,
-        color: '#18000000',
+        radius: 20,
+        color: '#12000000',
         offsetX: 0,
-        offsetY: 8
+        offsetY: 7
       })
     }
   }
@@ -5214,7 +9412,7 @@ struct ToDoList {
           .fontSize(16)
         Text(label)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor(this.currentTab === index ? Color.White : this.getThemeColor())
+          .fontColor(this.isNavIndexSelected(index) ? Color.White : this.getThemeColor())
           .textAlign(TextAlign.Center)
           .maxLines(1)
       }
@@ -5226,35 +9424,32 @@ struct ToDoList {
           bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
         })
         .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-        .backgroundColor(this.currentTab === index ? this.getThemeColor() : this.getThemeLightColor())
+        .backgroundColor(this.isNavIndexSelected(index) ? this.getThemeColor() : this.getThemeLightColor())
         .width(Constant.PERCENT_FULL)
         .onClick(() => {
           this.currentTab = index;
         })
     } else {
-      Row({ space: this.currentTab === index ? STYLE_CONFIG.ICON_GUTTER : 0 }) {
+      Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
         Text(this.getTabIcon(index))
-          .fontSize(this.currentTab === index ? 18 : 17)
-        if (this.currentTab === index) {
-          Text(label)
-            .fontSize($r('sys.float.ohos_id_text_size_body2'))
-            .fontColor(Color.White)
-            .fontWeight(FontWeight.Medium)
-            .maxLines(1)
-        }
+          .fontSize(this.isNavIndexSelected(index) ? 18 : 16)
+          .fontColor(this.isNavIndexSelected(index) ? this.getThemeColor() : UI_COLORS.TEXT_WEAK)
+        Text(label)
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.isNavIndexSelected(index) ? this.getThemeColor() : UI_COLORS.TEXT_WEAK)
+          .fontWeight(this.isNavIndexSelected(index) ? FontWeight.Medium : FontWeight.Regular)
+          .maxLines(1)
       }
         .justifyContent(FlexAlign.Center)
         .padding({
-          left: this.currentTab === index ? STYLE_CONFIG.LIST_ITEM_GUTTER : STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
-          right: this.currentTab === index ? STYLE_CONFIG.LIST_ITEM_GUTTER : STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
-          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2,
-          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING * 2
+          top: STYLE_CONFIG.OPERATION_BUTTON_PADDING,
+          bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
         })
         .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-        .backgroundColor(this.currentTab === index ? this.getThemeColor() : '#00FFFFFF')
-        .opacity(this.currentTab === index ? 1 : 0.82)
-        .height(this.currentTab === index ? 46 : 40)
-        .width(this.currentTab === index ? 86 : 34)
+        .backgroundColor(this.isNavIndexSelected(index) ? this.getThemeLightColor() : '#00FFFFFF')
+        .opacity(this.isNavIndexSelected(index) ? 1 : 0.76)
+        .height(50)
+        .layoutWeight(1)
         .onClick(() => {
           this.currentTab = index;
         })

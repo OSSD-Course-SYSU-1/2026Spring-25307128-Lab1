@@ -18,6 +18,14 @@ const checks = [
   ['saveAppState', 'saveAppState()'],
   ['resetDailyStateIfNeeded', 'resetDailyStateIfNeeded'],
   ['toggleTaskCompleteByKey', 'toggleTaskCompleteByKey'],
+  ['AddOrEditTodoForm', 'AddOrEditTodoForm'],
+  ['saveNewTodoFromForm', 'saveNewTodoFromForm'],
+  ['focusReturnTab', 'focusReturnTab'],
+  ['consumeFocusReturnTab', 'consumeFocusReturnTab'],
+  ['focus task filter', "item.taskType === 'focus'"],
+  ['once task type', "taskType === 'once'"],
+  ['completeOnceTaskAndRemove', 'completeOnceTaskAndRemove'],
+  ['completeTaskByKey', 'completeTaskByKey'],
   // Pages
   ['build()', 'build()'],
   ['bottomNavigation', 'bottomNavigation'],
@@ -54,6 +62,15 @@ const checks = [
   // Focus room
   ['focusRoomStatusCard', 'focusRoomStatusCard'],
   ['focusRoomPrimaryAction', 'focusRoomPrimaryAction'],
+  ['focusRoomBuddyHint', 'focusRoomBuddyHint'],
+  ['currentFocusQuote', 'currentFocusQuote'],
+  ['focusPreferencesCard', 'focusPreferencesCard'],
+  ['focusClockStyleIndex', 'focusClockStyleIndex'],
+  ['todoActionPanel', 'todoActionPanel'],
+  ['todoSoftActionButton', 'todoSoftActionButton'],
+  ['focusRoomFloatingIcon', 'focusRoomFloatingIcon'],
+  ['focusRoomThemePanel', 'focusRoomThemePanel'],
+  ['focusRoomNoisePanel', 'focusRoomNoisePanel'],
   // Const imports
   ['STYLE_CONFIG ref', 'STYLE_CONFIG'],
   ['UI_COLORS ref', 'UI_COLORS'],
@@ -63,7 +80,7 @@ const checks = [
   ['CommonPill import', 'CommonPill'],
   ['CommonProgressBar import', 'CommonProgressBar'],
   // Nav
-  ['visibleTabIndexes excludes 3', '[0, 1, 2, 4, 5, 7]'],
+  ['visibleTabIndexes has 5 main tabs', '[0, 2, 4, 5, 7]'],
   // Cross-device
   ['TaskTransferService', 'TaskTransferService'],
   ['receivedTransferIds', 'receivedTransferIds'],

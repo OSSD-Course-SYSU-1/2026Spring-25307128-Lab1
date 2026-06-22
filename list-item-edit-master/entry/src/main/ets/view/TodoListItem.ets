@@ -14,6 +14,7 @@
  */
 
 import { STYLE_CONFIG, UI_COLORS, Constant } from '../common/Constants';
+import { STYLE_COLORS } from '../common/StyleConstants';
 import { ToDo } from '../model/ToDo';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
@@ -48,12 +49,12 @@ export struct ToDoListItem {
 
   getPriorityColor(): string {
     if (this.toDoItem.priority >= 2) {
-      return '#C96B62';
+      return STYLE_COLORS.PRIORITY_HIGH;
     }
     if (this.toDoItem.priority === 1) {
-      return UI_COLORS.ORANGE;
+      return STYLE_COLORS.PRIORITY_MIDDLE;
     }
-    return UI_COLORS.MINT;
+    return STYLE_COLORS.PRIORITY_LOW;
   }
 
   getStartOfDay(timestamp: number): number {
