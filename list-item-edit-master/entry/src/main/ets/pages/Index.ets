@@ -126,6 +126,9 @@ struct ToDoList {
   @State todayCompletedCount: number = 0;
   @State todayFocusMinutes: number = 0;
   @State todayReadingMinutes: number = 0;
+  @State todayScoreGain: number = 0;
+  @State recentScoreSource: string = '\u6682\u65E0';
+  @State achievementRewardClaimed: boolean[] = [false, false, false, false, false];
   @State dailyGoalNames: string[] = ['\u5B8C\u62103\u4E2A\u4EFB\u52A1', '\u5B8C\u62102\u4E2A\u756A\u8304',
     '\u4E13\u6CE830\u5206\u949F', '\u9605\u8BFB30\u5206\u949F'];
   @State dailyGoalTargets: number[] = [3, 2, 30, 30];
@@ -191,8 +194,12 @@ struct ToDoList {
   @State pendingFocusRemainingSeconds: number = 0;
   @State pendingFocusTotalSeconds: number = 0;
   @State pendingFocusIsPaused: boolean = false;
+  @State moSceneScale: number = 1;
+  @State moSceneRotate: number = 0;
+  @State moSceneOffsetY: number = 0;
 
   private focusTimer: number = -1;
+  private moAnimationTimer: number = -1;
   private appPreferences: preferences.Preferences | null = null;
   private taskTransferService: TaskTransferService = new TaskTransferService();
   private focusTaskPieContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
@@ -206,13 +213,15 @@ struct ToDoList {
   private themeColors: string[] = ['#28513F', '#304E63', '#51476F', '#A96F2D', '#A66B80', '#222831'];
   private themeLightColors: string[] = ['#ECF8F0', '#EEF4F8', '#F1EEF8', '#FFF7EA', '#F8EEF3', '#ECEFF3'];
   private themePrices: number[] = [0, 0, 50, 80, 120, 200];
-  private deliveryDevices: string[] = ['\u624B\u673A', '\u5E73\u677F', '\u667A\u6167\u5C4F', '\u7535\u8111'];
+  private sampleTransferDevices: string[] = ['\u6F14\u793A\u8BBE\u5907', '\u6F14\u793A\u8BBE\u5907',
+    '\u6F14\u793A\u8BBE\u5907', '\u6F14\u793A\u8BBE\u5907'];
   private sortNames: string[] = ['\u521B\u5EFA\u65F6\u95F4', '\u540D\u79F0', '\u5B8C\u6210\u72B6\u6001', '\u4F18\u5148\u7EA7'];
   private tabNames: string[] = ['\u4EE3\u529E', '\u4EFB\u52A1', '\u65E5\u5386', '\u4E13\u6CE8', '\u7EDF\u8BA1', '\u5C0Fmo\u7A7A\u95F4', '\u8DE8\u8BBE\u5907', '\u6211\u7684'];
   private visibleTabIndexes: number[] = [0, 2, 4, 5, 7];
   private priorityNames: string[] = ['\u4F4E', '\u4E2D', '\u9AD8'];
   private deadlineNames: string[] = ['\u65E0\u622A\u6B62\u65E5\u671F', '\u4ECA\u5929', '\u660E\u5929', '3\u5929\u540E', '\u4E00\u5468\u540E'];
-  private demoTaskNames: string[] = ['\u8BFB\u4E66', '\u9AD8\u6570\u590D\u4E60', '\u80CC\u5355\u8BCD', 'HarmonyOS\u9879\u76EE'];
+  private sampleTaskNames: string[] = ['\u9AD8\u6570\u590D\u4E60', '\u82F1\u8BED\u80CC\u5355\u8BCD', 'HarmonyOS \u9879\u76EE',
+    '\u9605\u8BFB', '\u8FD0\u52A8\u6253\u5361'];
   private deadlineOffsets: number[] = [-1, 0, 1, 3, 7];
   private focusMinuteNames: string[] = ['5\u5206\u949F', '15\u5206\u949F', '25\u5206\u949F'];
   private focusMinuteValues: number[] = [5, 15, 25];
@@ -233,7 +242,7 @@ struct ToDoList {
   private dailyGoalTargetNames: string[] = ['1', '2', '3', '5', '10', '15', '20', '30', '45', '60'];
   private outfitNames: string[] = ['\u5976\u6CB9\u56F4\u5DFE', '\u661F\u661F\u5E3D\u5B50',
     '\u68EE\u6797\u4E66\u5305', '\u591C\u8BFB\u773C\u955C', '\u5B66\u9738\u5C0F\u5FBD\u7AE0'];
-  private outfitPrices: number[] = [0, 50, 80, 120, 160];
+  private outfitPrices: number[] = [30, 50, 80, 120, 180];
   private motivationalQuotes: string[] = [
     '\u5148\u5F00\u59CB 5 \u5206\u949F\u5C31\u597D\uFF0C\u72B6\u6001\u4F1A\u6162\u6162\u56DE\u6765 \uD83C\uDF31',
     '\u4ECA\u5929\u7684\u5C0F\u52AA\u529B\uFF0C\u4F1A\u53D8\u6210\u672A\u6765\u7684\u5927\u60CA\u559C \u2728',
@@ -249,10 +258,12 @@ struct ToDoList {
 
   aboutToAppear() {
     this.startApp();
+    this.startMoSceneAnimation();
   }
 
   aboutToDisappear() {
     this.clearFocusTimer();
+    this.clearMoSceneAnimation();
   }
 
   async startApp(): Promise<void> {
@@ -541,6 +552,8 @@ struct ToDoList {
     if (this.dailyGoalDate !== today) {
       this.dailyGoalRewardClaimed = [false, false, false, false];
       this.dailyGoalDate = today;
+      this.todayScoreGain = 0;
+      this.recentScoreSource = '\u6682\u65E0';
       if (this.todayFocusMinutes !== 0) {
         this.todayFocusMinutes = 0;
       }
@@ -551,6 +564,11 @@ struct ToDoList {
         this.todayCompletedCount = 0;
       }
       this.dailyGoalRewardClaimed = this.dailyGoalRewardClaimed.map(() => false);
+      if (this.lastCheckInDate !== today) {
+        this.hasCheckedToday = true;
+        this.lastCheckInDate = today;
+        this.addGrowthReward(2, '\u6BCF\u65E5\u6253\u5F00App');
+      }
       hasChanged = true;
     }
     return hasChanged;
@@ -940,9 +958,78 @@ struct ToDoList {
     return this.themeLightColors[this.themeIndex];
   }
 
-  addGrowthReward(scoreValue: number) {
-    this.score += scoreValue;
-    this.petExp += scoreValue;
+  addGrowthReward(scoreValue: number, reason: string = '') {
+    let safeScore = Math.max(0, Math.floor(scoreValue));
+    if (safeScore <= 0) {
+      return;
+    }
+    this.score += safeScore;
+    this.petExp += safeScore;
+    this.todayScoreGain += safeScore;
+    if (reason.length > 0) {
+      this.recentScoreSource = `${reason} +${safeScore}`;
+      this.showToastMessage(`+${safeScore} \u79EF\u5206\uFF08${reason}\uFF09`);
+    } else {
+      this.recentScoreSource = `\u83B7\u5F97\u79EF\u5206 +${safeScore}`;
+    }
+  }
+
+  getFocusScoreReward(focusMinutes: number): number {
+    if (focusMinutes === 5) {
+      return 2;
+    }
+    if (focusMinutes === 15) {
+      return 6;
+    }
+    if (focusMinutes === 25) {
+      return 10;
+    }
+    return Math.max(1, Math.floor(focusMinutes / 2));
+  }
+
+  getTaskScoreReward(item: ToDo | undefined): number {
+    if (item !== undefined && item.priority >= 2) {
+      return 5;
+    }
+    if (item !== undefined && item.priority === 1) {
+      return 4;
+    }
+    return 3;
+  }
+
+  getTaskScoreReason(item: ToDo | undefined): string {
+    if (item !== undefined && item.priority >= 2) {
+      return '\u5B8C\u6210\u9AD8\u4F18\u4EFB\u52A1';
+    }
+    if (item !== undefined && item.priority === 1) {
+      return '\u5B8C\u6210\u4E2D\u4F18\u4EFB\u52A1';
+    }
+    return '\u5B8C\u6210\u666E\u901A\u4EFB\u52A1';
+  }
+
+  grantAchievementRewards() {
+    let updatedClaims = [...this.achievementRewardClaimed];
+    if (!updatedClaims[0] && this.isFirstFocusAchievementUnlocked()) {
+      updatedClaims[0] = true;
+      this.addGrowthReward(20, '\u8FBE\u6210\u6210\u5C31\uFF1A\u9996\u6B21\u4E13\u6CE8');
+    }
+    if (!updatedClaims[1] && this.getCompletedCount() >= 10) {
+      updatedClaims[1] = true;
+      this.addGrowthReward(20, '\u8FBE\u6210\u6210\u5C31\uFF1A\u5B8C\u621010\u4E2A\u4EFB\u52A1');
+    }
+    if (!updatedClaims[2] && this.getCompletedCount() >= 50) {
+      updatedClaims[2] = true;
+      this.addGrowthReward(50, '\u8FBE\u6210\u6210\u5C31\uFF1A\u5B8C\u621050\u4E2A\u4EFB\u52A1');
+    }
+    if (!updatedClaims[3] && this.getTotalFocusMinutes() >= 100) {
+      updatedClaims[3] = true;
+      this.addGrowthReward(30, '\u8FBE\u6210\u6210\u5C31\uFF1A\u4E13\u6CE8100\u5206\u949F');
+    }
+    if (!updatedClaims[4] && this.dailyGoalStreak >= 3) {
+      updatedClaims[4] = true;
+      this.addGrowthReward(50, '\u8FBE\u6210\u6210\u5C31\uFF1A\u8FDE\u7EED\u5B66\u4E603\u5929');
+    }
+    this.achievementRewardClaimed = updatedClaims;
   }
 
   getPetName(): string {
@@ -1433,6 +1520,47 @@ struct ToDoList {
     }
   }
 
+  startMoSceneAnimation() {
+    this.clearMoSceneAnimation();
+    this.applyMoSceneLoopFrame();
+    this.moAnimationTimer = setInterval(() => {
+      this.applyMoSceneLoopFrame();
+    }, 1500);
+  }
+
+  clearMoSceneAnimation() {
+    if (this.moAnimationTimer >= 0) {
+      clearInterval(this.moAnimationTimer);
+      this.moAnimationTimer = -1;
+    }
+  }
+
+  applyMoSceneLoopFrame() {
+    let stageName = this.getMoStageName();
+    if (stageName === '\u86CB') {
+      this.moSceneScale = this.moSceneScale > 1 ? 1 : 1.035;
+      this.moSceneRotate = 0;
+      this.moSceneOffsetY = 0;
+      return;
+    }
+    if (stageName === '\u7834\u58F3') {
+      this.moSceneScale = 1.025;
+      this.moSceneRotate = this.moSceneRotate >= 0 ? -2 : 2;
+      this.moSceneOffsetY = 0;
+      return;
+    }
+    this.moSceneScale = 1;
+    this.moSceneRotate = 0;
+    this.moSceneOffsetY = this.moSceneOffsetY < 0 ? 0 : -7;
+  }
+
+  popMoScene() {
+    this.moSceneScale = 1.08;
+    setTimeout(() => {
+      this.applyMoSceneLoopFrame();
+    }, 180);
+  }
+
   pauseOrResumeFocus() {
     if (this.focusTaskKey.length === 0) {
       return;
@@ -1486,7 +1614,7 @@ struct ToDoList {
       return todoItem;
     });
     if (hasFocusTask) {
-      this.addGrowthReward(15);
+      this.addGrowthReward(this.getFocusScoreReward(focusMinutes), `\u5B8C\u6210${focusMinutes}\u5206\u949F\u4E13\u6CE8`);
       if (this.todayPomodoroDate !== this.getTodayString()) {
         this.todayPomodoroDate = this.getTodayString();
         this.todayPomodoroCount = 0;
@@ -1508,9 +1636,12 @@ struct ToDoList {
     this.isFocusNoisePanelVisible = false;
     this.currentFocusQuote = '';
     this.currentTab = this.consumeFocusReturnTab();
-    this.showToastMessage(hasFocusTask ? '\u4E13\u6CE8\u5B8C\u6210\uFF0C\u79EF\u5206 +15' : '\u4E13\u6CE8\u5DF2\u7ED3\u675F');
+    if (!hasFocusTask) {
+      this.showToastMessage('\u4E13\u6CE8\u5DF2\u7ED3\u675F');
+    }
     if (hasFocusTask) {
       this.grantAchievedDailyGoals();
+      this.grantAchievementRewards();
       this.saveAppState();
     }
   }
@@ -1652,6 +1783,34 @@ struct ToDoList {
     return 'serious';
   }
 
+  getMoMoodName(): string {
+    let expressionState = this.getMoExpressionState();
+    if (expressionState === 'achieve') {
+      return '\u6210\u5C31\u611F';
+    }
+    if (expressionState === 'sleepy') {
+      return '\u56F0\u5026';
+    }
+    if (expressionState === 'happy') {
+      return '\u5F00\u5FC3';
+    }
+    return '\u8BA4\u771F';
+  }
+
+  getMoMoodColor(): ResourceColor {
+    let moodName = this.getMoMoodName();
+    if (moodName === '\u6210\u5C31\u611F') {
+      return UI_COLORS.ORANGE;
+    }
+    if (moodName === '\u56F0\u5026') {
+      return UI_COLORS.TEXT_WEAK;
+    }
+    if (moodName === '\u5F00\u5FC3') {
+      return UI_COLORS.MINT;
+    }
+    return UI_COLORS.PET_PURPLE;
+  }
+
   getStudyBuddyMessage(): string {
     if (this.todayFocusMinutes >= 60) {
       return '\u4ECA\u5929\u72B6\u6001\u5F88\u597D\uFF0C\u5C0Fmo\u90FD\u88AB\u4F60\u5E26\u52A8\u5566\u3002';
@@ -1775,6 +1934,56 @@ struct ToDoList {
     return '\u5DF2\u8FBE\u5230\u5F53\u524D\u6700\u9AD8\u9636\u6BB5';
   }
 
+  getMoGrowthStageName(): string {
+    let level = this.getPetLevel();
+    if (level <= 2) {
+      return '\u5B75\u5316\u4E2D';
+    }
+    if (level <= 4) {
+      return '\u7834\u58F3\u671F';
+    }
+    if (level <= 7) {
+      return '\u5E7C\u5D3D\u671F';
+    }
+    return '\u5B66\u4E60\u4F19\u4F34';
+  }
+
+  getMoNextGrowthStageName(): string {
+    let level = this.getPetLevel();
+    if (level <= 2) {
+      return '\u7834\u58F3\u671F';
+    }
+    if (level <= 4) {
+      return '\u5E7C\u5D3D\u671F';
+    }
+    if (level <= 7) {
+      return '\u5B66\u4E60\u4F19\u4F34';
+    }
+    return '\u5DF2\u8FBE\u5230\u5F53\u524D\u6700\u9AD8\u9636\u6BB5';
+  }
+
+  getMoGrowthStageGap(): number {
+    let level = this.getPetLevel();
+    if (level <= 2) {
+      return 3 - level;
+    }
+    if (level <= 4) {
+      return 5 - level;
+    }
+    if (level <= 7) {
+      return 8 - level;
+    }
+    return 0;
+  }
+
+  getMoGrowthStageText(): string {
+    let gap = this.getMoGrowthStageGap();
+    if (gap <= 0) {
+      return '\u5C0Fmo\u5DF2\u6210\u4E3A\u5B66\u4E60\u4F19\u4F34\uFF0C\u4F1A\u7EE7\u7EED\u966A\u4F60\u5B66\u4E60\u3002';
+    }
+    return `\u5C0Fmo\u6B63\u5728\u6162\u6162\u957F\u5927\uFF0C\u518D\u5347 ${gap} \u7EA7\u5C31\u8FDB\u5165${this.getMoNextGrowthStageName()}\u3002`;
+  }
+
   getMoStageMessage(): string {
     let stageName = this.getMoStageName();
     if (stageName === '\u86CB') {
@@ -1793,24 +2002,15 @@ struct ToDoList {
   }
 
   getMoTodayCompanionText(): string {
-    if (this.focusTaskKey.length > 0 && this.isFocusRunning) {
-      return '\u5C0Fmo\u8BA4\u771F\u5B66\u4E60';
-    }
-    if (this.todayCompletedCount >= 3) {
-      return '\u5C0Fmo\u4ECA\u5929\u5F88\u5F00\u5FC3';
-    }
-    if (this.todayFocusMinutes <= 0) {
-      return '\u5C0Fmo\u5728\u6253\u76F9';
-    }
-    return '\u5C0Fmo\u6B63\u5728\u6162\u6162\u79EF\u6512\u80FD\u91CF';
+    return this.getMoMoodName();
   }
 
   getDailyCompanionQuote(): string {
     let quotes: string[] = [
-      '\u4ECA\u5929\u4E5F\u966A\u4F60\u5B66\u4E00\u70B9\u70B9\u3002',
-      '\u5148\u5F00\u59CB\uFF0C\u6BD4\u5B8C\u7F8E\u66F4\u91CD\u8981\u3002',
-      '\u5C0F\u6B65\u524D\u8FDB\u4E5F\u662F\u524D\u8FDB\u3002',
-      '\u4E0D\u6025\uFF0C\u6211\u4EEC\u6162\u6162\u6765\u3002'
+      '\u4ECA\u5929\u4E5F\u4E00\u8D77\u52A0\u6CB9\u5427',
+      '\u5148\u5B8C\u6210\u4E00\u4E2A\u5C0F\u76EE\u6807',
+      '\u5C0F\u6B65\u524D\u8FDB\u4E5F\u662F\u8FDB\u6B65',
+      '\u4F11\u606F\u4E00\u4E0B\u518D\u51FA\u53D1'
     ];
     let seed = 0;
     let todayText = this.getTodayString();
@@ -1901,18 +2101,20 @@ struct ToDoList {
     let wasCompleted = this.toDoData[targetIndex].isCompleted;
     hilog.info(0x0000, 'Index',
       `toggle key=${normalizedKey}, targetIndex=${targetIndex}, before=${wasCompleted}, after=removed`);
+    let targetItem = this.toDoData[targetIndex];
     this.toDoData = this.toDoData.filter((todoItem: ToDo) => String(todoItem.key) !== normalizedKey);
     if (!wasCompleted) {
-      this.recordTaskCompletion();
+      this.recordTaskCompletion(targetItem);
     }
     this.saveAppState();
   }
 
-  recordTaskCompletion() {
-    this.addGrowthReward(10);
+  recordTaskCompletion(item?: ToDo) {
+    this.addGrowthReward(this.getTaskScoreReward(item), this.getTaskScoreReason(item));
     this.todayCompletedCount += 1;
     try {
       this.grantAchievedDailyGoals();
+      this.grantAchievementRewards();
     } catch (error) {
       let err = error as BusinessError;
       hilog.error(0x0000, 'Index', `grant daily goal failed. error code=${err.code}, message=${err.message}`);
@@ -1951,8 +2153,7 @@ struct ToDoList {
     }
     this.hasCheckedToday = true;
     this.lastCheckInDate = this.getTodayString();
-    this.addGrowthReward(20);
-    this.showToastMessage('\u6253\u5361\u6210\u529F\uFF0C\u79EF\u5206 +20');
+    this.addGrowthReward(2, '\u6BCF\u65E5\u7B7E\u5230');
     this.saveAppState();
   }
 
@@ -2148,7 +2349,7 @@ struct ToDoList {
   showDeliveryPicker(item: ToDo) {
     AlertDialog.show({
       title: '\u6D41\u8F6C\u5230\u5176\u4ED6\u8BBE\u5907',
-      message: '\u5C06\u8BE5\u4EFB\u52A1\u5199\u5165\u5206\u5E03\u5F0FKV\u5E76\u53D1\u8D77\u8BBE\u5907\u540C\u6B65\uFF1B\u5982\u679C\u771F\u673A\u53D1\u73B0\u4E0D\u53EF\u7528\uFF0C\u4F7F\u7528\u672C\u5730\u53EF\u9A8C\u8BC1\u515C\u5E95\u3002',
+      message: '\u5C06\u4EFB\u52A1\u5199\u5165\u5206\u5E03\u5F0FKV\u5E76\u53D1\u8D77\u540C\u6B65\uFF1B\u65E0\u771F\u673A\u65F6\u53EF\u9009\u6F14\u793A\u8BBE\u5907\u3002',
       primaryButton: {
         value: '\u9009\u62E9\u8BBE\u5907',
         action: () => {
@@ -2156,7 +2357,7 @@ struct ToDoList {
         }
       },
       secondaryButton: {
-        value: '\u6A21\u62DF\u8BB0\u5F55',
+        value: '\u6F14\u793A\u8BBE\u5907',
         action: () => {
           this.showMockDeliveryPicker(item);
         }
@@ -2166,13 +2367,13 @@ struct ToDoList {
 
   showMockDeliveryPicker(item: ToDo) {
     this.getUIContext().showTextPickerDialog({
-      range: this.deliveryDevices,
+      range: this.sampleTransferDevices,
       onAccept: (value: TextPickerResult) => {
-        let deviceName = this.deliveryDevices[Number(value.index)];
-        this.lastDeliveryType = '\u6A21\u62DF\u8BB0\u5F55';
-        this.lastDeliveryRecord = `\u6A21\u62DF\u8BB0\u5F55\uFF1A${item.name} \u2192 ${deviceName}\uFF08\u4E0D\u4EE3\u8868\u771F\u5B9E\u6295\u9001\u6210\u529F\uFF09`;
-        this.realDeliveryStatus = '\u6A21\u62DF\u8BB0\u5F55\u5DF2\u4FDD\u7559\uFF0C\u672A\u8FDB\u884C\u771F\u5B9E\u8DE8\u8BBE\u5907\u540C\u6B65';
-        this.showToastMessage('\u5DF2\u4FDD\u7559\u6A21\u62DF\u8BB0\u5F55\uFF0C\u8FD9\u4E0D\u662F\u771F\u5B9E\u6295\u9001');
+        let deviceName = this.sampleTransferDevices[Number(value.index)];
+        this.lastDeliveryType = '\u6F14\u793A\u8BBE\u5907';
+        this.lastDeliveryRecord = `\u6F14\u793A\u8BBE\u5907\uFF1A${item.name} \u2192 ${deviceName}\uFF08\u4E0D\u4EE3\u8868\u771F\u5B9E\u6295\u9001\u6210\u529F\uFF09`;
+        this.realDeliveryStatus = '\u6F14\u793A\u8BBE\u5907\u8BB0\u5F55\u5DF2\u4FDD\u7559\uFF0C\u672A\u8FDB\u884C\u771F\u5B9E\u8DE8\u8BBE\u5907\u540C\u6B65';
+        this.showToastMessage('\u5DF2\u4FDD\u7559\u6F14\u793A\u8BBE\u5907\u8BB0\u5F55');
         this.saveAppState();
       },
     });
@@ -2202,7 +2403,7 @@ struct ToDoList {
       }
       this.realDeliveryDevices = devices;
       this.getUIContext().showTextPickerDialog({
-        range: devices.map((device: TransferDevice) => device.displayName),
+        range: devices.map((device: TransferDevice) => this.getTransferDeviceDisplayName(device)),
         onAccept: (value: TextPickerResult) => {
           let selectedDevice = this.realDeliveryDevices[Number(value.index)];
           if (selectedDevice !== undefined) {
@@ -2231,21 +2432,22 @@ struct ToDoList {
   }
 
   async sendRealTask(item: ToDo, targetDevice: TransferDevice): Promise<void> {
-    this.realDeliveryStatus = `\u6D41\u8F6C\u4E2D\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+    let displayName = this.getTransferDeviceDisplayName(targetDevice);
+    this.realDeliveryStatus = `\u6D41\u8F6C\u4E2D\uFF1A${item.name} \u2192 ${displayName}`;
     this.lastDeliveryType = '\u771F\u5B9E\u6295\u9001';
-    this.lastRealSentTask = `${item.name} \u2192 ${targetDevice.displayName}`;
+    this.lastRealSentTask = `${item.name} \u2192 ${displayName}`;
     this.lastDeliveryRecord = this.realDeliveryStatus;
     this.saveAppState();
     try {
       let result = await this.taskTransferService.transferTaskToDevice(this.buildTransferTodoData(item),
         targetDevice.networkId);
-      this.realDeliveryStatus = `${result.fallback ? '\u515C\u5E95\u6F14\u793A' : '\u540C\u6B65\u5DF2\u53D1\u8D77'}\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+      this.realDeliveryStatus = `${result.fallback ? '\u6F14\u793A\u8BBE\u5907' : '\u540C\u6B65\u5DF2\u53D1\u8D77'}\uFF1A${item.name} \u2192 ${displayName}`;
       this.lastDeliveryRecord = this.realDeliveryStatus;
       this.showToastMessage(result.message);
     } catch (error) {
       let err = error as BusinessError;
       this.realDeliveryStatus = `\u53D1\u9001\u5931\u8D25\uFF1A${err.message}`;
-      this.lastDeliveryRecord = `\u53D1\u9001\u5931\u8D25\uFF1A${item.name} \u2192 ${targetDevice.displayName}`;
+      this.lastDeliveryRecord = `\u53D1\u9001\u5931\u8D25\uFF1A${item.name} \u2192 ${displayName}`;
       this.showToastMessage('\u771F\u5B9E\u6295\u9001\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u8BBE\u5907\u4FE1\u4EFB\u548C\u6743\u9650');
     }
     this.saveAppState();
@@ -2270,7 +2472,7 @@ struct ToDoList {
       this.discoveredDeviceCount = devices.length;
       this.realDeliveryDevices = devices;
       this.getUIContext().showTextPickerDialog({
-        range: devices.map((device: TransferDevice) => device.displayName),
+        range: devices.map((device: TransferDevice) => this.getTransferDeviceDisplayName(device)),
         onAccept: (value: TextPickerResult) => {
           let selectedDevice = this.realDeliveryDevices[Number(value.index)];
           if (selectedDevice !== undefined) {
@@ -2294,12 +2496,13 @@ struct ToDoList {
       isPaused: !this.isFocusRunning
     };
     this.lastDeliveryType = '\u4E13\u6CE8\u6D41\u8F6C';
-    this.lastRealSentTask = `${focusData.taskTitle} \u2192 ${targetDevice.displayName}`;
+    let displayName = this.getTransferDeviceDisplayName(targetDevice);
+    this.lastRealSentTask = `${focusData.taskTitle} \u2192 ${displayName}`;
     this.realDeliveryStatus = `\u4E13\u6CE8\u6D41\u8F6C\u4E2D\uFF1A${focusData.taskTitle}`;
     this.saveAppState();
     try {
       let result: TransferResult = await this.taskTransferService.transferFocusState(focusData, targetDevice.networkId);
-      this.realDeliveryStatus = `${result.fallback ? '\u515C\u5E95\u6F14\u793A' : '\u540C\u6B65\u5DF2\u53D1\u8D77'}\uFF1A\u4E13\u6CE8\u72B6\u6001 \u2192 ${targetDevice.displayName}`;
+      this.realDeliveryStatus = `${result.fallback ? '\u6F14\u793A\u8BBE\u5907' : '\u540C\u6B65\u5DF2\u53D1\u8D77'}\uFF1A\u4E13\u6CE8\u72B6\u6001 \u2192 ${displayName}`;
       this.lastDeliveryRecord = this.realDeliveryStatus;
       this.showToastMessage(result.message);
     } catch (error) {
@@ -2308,6 +2511,13 @@ struct ToDoList {
       this.showToastMessage('\u4E13\u6CE8\u72B6\u6001\u6D41\u8F6C\u5931\u8D25');
     }
     this.saveAppState();
+  }
+
+  getTransferDeviceDisplayName(device: TransferDevice): string {
+    if (device.networkId.startsWith('fallback_')) {
+      return '\u6F14\u793A\u8BBE\u5907';
+    }
+    return device.displayName.length > 0 ? device.displayName : device.deviceName;
   }
 
   buildTransferTodoData(item: ToDo): TransferTodoData {
@@ -2601,8 +2811,7 @@ struct ToDoList {
       return;
     }
     this.toDoData = this.toDoData.filter((todoItem: ToDo) => String(todoItem.key) !== normalizedKey);
-    this.recordTaskCompletion();
-    this.showToastMessage('\u4E00\u6B21\u6027\u4EFB\u52A1\u5DF2\u5B8C\u6210');
+    this.recordTaskCompletion(targetItem);
     this.saveAppState();
   }
 
@@ -2614,9 +2823,8 @@ struct ToDoList {
     }
     this.toDoData = this.toDoData.filter((todoItem: ToDo) => String(todoItem.key) !== normalizedKey);
     if (!targetItem.isCompleted) {
-      this.recordTaskCompletion();
+      this.recordTaskCompletion(targetItem);
     }
-    this.showToastMessage('\u4EFB\u52A1\u5DF2\u5B8C\u6210');
     this.saveAppState();
   }
 
@@ -2690,11 +2898,52 @@ struct ToDoList {
     this.saveAppState();
   }
 
-  createDemoTodo(taskName: string) {
+  createSampleTodo(taskName: string) {
     let newItem = new ToDo(taskName, 1, this.getDeadlineByEditOffset(1, 0), taskName, '\u4E0D\u91CD\u590D',
       'focus', 25, -1);
     this.toDoData = [newItem, ...this.toDoData];
     this.showToastMessage('\u5DF2\u65B0\u589E\u4EE3\u529E');
+    this.saveAppState();
+  }
+
+  isSampleTaskName(taskName: string): boolean {
+    return this.sampleTaskNames.indexOf(taskName) >= 0;
+  }
+
+  hasSampleData(): boolean {
+    return this.toDoData.some((todoItem: ToDo) => this.isSampleTaskName(todoItem.name));
+  }
+
+  generateSampleData() {
+    let sampleItems: ToDo[] = [
+      new ToDo('\u9AD8\u6570\u590D\u4E60', 2, this.getDeadlineByEditOffset(0, 0), '\u5B66\u4E60',
+        '\u4E0D\u91CD\u590D', 'focus', 45, 0),
+      new ToDo('\u82F1\u8BED\u80CC\u5355\u8BCD', 1, this.getDeadlineByEditOffset(1, 0), '\u82F1\u8BED',
+        '\u6BCF\u5929', 'focus', 25, 1),
+      new ToDo('HarmonyOS \u9879\u76EE', 2, this.getDeadlineByEditOffset(3, 0), '\u9879\u76EE',
+        '\u4E0D\u91CD\u590D', 'focus', 30, 2),
+      new ToDo('\u9605\u8BFB', 0, this.getDeadlineByEditOffset(7, 0), '\u9605\u8BFB',
+        '\u4E0D\u91CD\u590D', 'focus', 25, 3),
+      new ToDo('\u8FD0\u52A8\u6253\u5361', 1, 0, '\u5065\u5EB7', '\u6BCF\u5929', 'habit', 15, 4)
+    ];
+    sampleItems[0].focusCount = 1;
+    sampleItems[0].focusDurationMinutes = 45;
+    sampleItems[1].focusCount = 2;
+    sampleItems[1].focusDurationMinutes = 50;
+    sampleItems[2].focusCount = 1;
+    sampleItems[2].focusDurationMinutes = 30;
+    this.toDoData = [...sampleItems, ...this.toDoData.filter((todoItem: ToDo) => !this.isSampleTaskName(todoItem.name))];
+    this.showToastMessage('\u793A\u4F8B\u6570\u636E\u5DF2\u751F\u6210');
+    this.saveAppState();
+  }
+
+  clearSampleData() {
+    if (!this.hasSampleData()) {
+      this.showToastMessage('\u6CA1\u6709\u53EF\u6E05\u7A7A\u7684\u793A\u4F8B\u6570\u636E');
+      return;
+    }
+    this.toDoData = this.toDoData.filter((todoItem: ToDo) => !this.isSampleTaskName(todoItem.name));
+    this.showToastMessage('\u793A\u4F8B\u6570\u636E\u5DF2\u6E05\u7A7A');
     this.saveAppState();
   }
 
@@ -3676,7 +3925,7 @@ struct ToDoList {
   @Builder
   deliveryRecordCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\uD83D\uDCE1 \u771F\u5B9E\u6295\u9001\u72B6\u6001')
+      Text('\u771F\u5B9E\u6295\u9001\u72B6\u6001')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -3692,7 +3941,7 @@ struct ToDoList {
             bottom: STYLE_CONFIG.OPERATION_BUTTON_PADDING
           })
           .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-          .backgroundColor(this.lastDeliveryType === '\u6A21\u62DF\u8BB0\u5F55' ? UI_COLORS.TEXT_WEAK : UI_COLORS.MINT)
+          .backgroundColor(this.lastDeliveryType === '\u6F14\u793A\u8BBE\u5907' ? UI_COLORS.TEXT_WEAK : UI_COLORS.MINT)
         Text(`\u5F53\u524D\u53D1\u73B0\u8BBE\u5907\u6570\uFF1A${this.discoveredDeviceCount}`)
           .fontSize($r('sys.float.ohos_id_text_size_body2'))
           .fontColor(UI_COLORS.TEXT_SECONDARY)
@@ -3737,9 +3986,9 @@ struct ToDoList {
   }
 
   @Builder
-  deviceTestGuideCard() {
+  deviceVerifyGuideCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\uD83E\uDDEA \u771F\u673A\u6D4B\u8BD5\u6B65\u9AA4')
+      Text('\u771F\u673A\u9A8C\u8BC1\u6B65\u9AA4')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -3784,7 +4033,7 @@ struct ToDoList {
       this.statisticsPanel()
       this.themeStore()
       this.deliveryRecordCard()
-      this.deviceTestGuideCard()
+      this.deviceVerifyGuideCard()
     }
     .width(Constant.PERCENT_FULL)
   }
@@ -3981,8 +4230,8 @@ struct ToDoList {
   taskEmptyState() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
       this.emptyPanel('\u25CC',
-        this.getTotalCount() === 0 ? '\u8FD8\u6CA1\u6709\u5B89\u6392\u4EFB\u52A1' : '\u6CA1\u6709\u5339\u914D\u7684\u5F85\u529E',
-        this.getTotalCount() === 0 ? '\u70B9\u51FB + \u65B0\u589E\u4E00\u4E2A\u5C0F\u76EE\u6807\uFF0C\u4ECE\u4E00\u4EF6\u4E8B\u5F00\u59CB\u3002' :
+        this.getTotalCount() === 0 ? '\u8FD8\u6CA1\u6709\u4EFB\u52A1' : '\u6CA1\u6709\u5339\u914D\u7684\u5F85\u529E',
+        this.getTotalCount() === 0 ? '\u70B9\u51FB + \u6DFB\u52A0\u4E00\u4E2A\u4EE3\u529E\u3002' :
           '\u6362\u4E2A\u5173\u952E\u8BCD\uFF0C\u6216\u56DE\u5230\u5168\u90E8\u4EFB\u52A1\u67E5\u770B\u3002')
     }
     .width(Constant.PERCENT_FULL)
@@ -4223,11 +4472,23 @@ struct ToDoList {
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
       Flex({ wrap: FlexWrap.Wrap }) {
-        ForEach(this.demoTaskNames, (taskName: string) => {
-          this.demoTaskButton(taskName)
+        ForEach(this.sampleTaskNames, (taskName: string) => {
+          this.sampleTaskButton(taskName)
         }, (taskName: string) => taskName)
       }
       .width(Constant.PERCENT_FULL)
+      Text('\u751F\u6210\u793A\u4F8B\u6570\u636E')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Bold)
+        .textAlign(TextAlign.Center)
+        .width(Constant.PERCENT_FULL)
+        .padding({ top: 12, bottom: 12 })
+        .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+        .backgroundColor(UI_COLORS.PET_PURPLE)
+        .onClick(() => {
+          this.generateSampleData();
+        })
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
@@ -4395,20 +4656,20 @@ struct ToDoList {
       Text('\u25CC')
         .fontSize(34)
         .fontColor(UI_COLORS.TEXT_WEAK)
-      Text('\u4ECA\u5929\u8FD8\u5F88\u6E05\u723D')
+      Text('\u8FD8\u6CA1\u6709\u4EFB\u52A1')
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .textAlign(TextAlign.Center)
         .width(Constant.PERCENT_FULL)
-      Text('\u9009\u4E00\u4E2A\u6F14\u793A\u4EFB\u52A1\uFF0C\u9A6C\u4E0A\u770B\u5230\u5B8C\u6574\u6D41\u7A0B\u3002')
+      Text('\u53EF\u4EE5\u5148\u6DFB\u52A0\u4E00\u4E2A\u793A\u4F8B\u4EFB\u52A1\u3002')
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .textAlign(TextAlign.Center)
         .width(Constant.PERCENT_FULL)
       Flex({ wrap: FlexWrap.Wrap }) {
-        ForEach(this.demoTaskNames, (taskName: string) => {
-          this.demoTaskButton(taskName)
+        ForEach(this.sampleTaskNames, (taskName: string) => {
+          this.sampleTaskButton(taskName)
         }, (taskName: string) => taskName)
       }
       .width(Constant.PERCENT_FULL)
@@ -4420,7 +4681,7 @@ struct ToDoList {
   }
 
   @Builder
-  demoTaskButton(taskName: string) {
+  sampleTaskButton(taskName: string) {
     Text(taskName)
       .fontSize($r('sys.float.ohos_id_text_size_body2'))
       .fontColor(Color.White)
@@ -4435,7 +4696,7 @@ struct ToDoList {
       .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
       .backgroundColor(this.getThemeColor())
       .onClick(() => {
-        this.createDemoTodo(taskName);
+        this.createSampleTodo(taskName);
       })
   }
 
@@ -5672,7 +5933,7 @@ struct ToDoList {
             this.statisticsFocusTypeDonutCard()
           }
           .layoutWeight(48)
-          .constraintSize({ maxWidth: 560 })
+          .constraintSize({ maxWidth: 520 })
           .alignSelf(ItemAlign.Start)
           Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
             this.statisticsCumulativeCard()
@@ -5704,18 +5965,18 @@ struct ToDoList {
 
   getStatisticsFeedback(): string {
     if (this.todayFocusMinutes >= 60) {
-      return '\u4ECA\u5929\u8FDB\u5165\u4E86\u9AD8\u6548\u5B66\u4E60\u72B6\u6001\uFF0C\u8282\u594F\u5F88\u7A33\u3002';
+      return '\u4ECA\u65E5\u4E13\u6CE8\u65F6\u957F\u5DF2\u8FBE 60 \u5206\u949F\u3002';
     }
     if (this.todayPomodoroCount >= 2) {
-      return '\u8FDE\u7EED\u5B8C\u6210\u591A\u4E2A\u756A\u8304\uFF0C\u4ECA\u5929\u5F88\u7A33\u5B9A\u3002';
+      return '\u4ECA\u65E5\u5DF2\u5B8C\u6210\u591A\u4E2A\u4E13\u6CE8\u6BB5\u3002';
     }
     if (this.todayCompletedCount >= 3) {
-      return '\u4EFB\u52A1\u63A8\u8FDB\u5F88\u660E\u663E\uFF0C\u4ECA\u5929\u7684\u8FDB\u5EA6\u770B\u5F97\u89C1\u3002';
+      return '\u4ECA\u65E5\u5DF2\u5B8C\u6210 3 \u4E2A\u4EE5\u4E0A\u4EFB\u52A1\u3002';
     }
     if (this.todayFocusMinutes > 0 || this.todayPomodoroCount > 0 || this.todayCompletedCount > 0) {
-      return '\u4ECA\u5929\u5DF2\u7ECF\u5F00\u59CB\u79EF\u7D2F\uFF0C\u7EE7\u7EED\u5F80\u524D\u4E00\u70B9\u70B9\u3002';
+      return '\u4ECA\u65E5\u5DF2\u6709\u4EFB\u52A1\u6216\u4E13\u6CE8\u8BB0\u5F55\u3002';
     }
-    return '\u4ECE\u4E00\u4E2A\u756A\u8304\u5F00\u59CB\uFF0C\u4ECA\u5929\u4E5F\u4F1A\u6709\u8FDB\u6B65\u3002';
+    return '\u5B8C\u6210\u4EFB\u52A1\u6216\u4E13\u6CE8\u540E\uFF0C\u8FD9\u91CC\u4F1A\u66F4\u65B0\u53CD\u9988\u3002';
   }
 
   getWeeklyPreviewValue(index: number): number {
@@ -5983,8 +6244,8 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       if (this.getTaskFocusShareTotalMinutes() <= 0) {
-        this.emptyPanel('\u25CC', '\u8FD8\u6CA1\u6709\u4E13\u6CE8\u6570\u636E',
-          '\u5B8C\u6210\u4E00\u6B21\u4E13\u6CE8\u540E\uFF0C\u5206\u7C7B\u5360\u6BD4\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002')
+        this.emptyPanel('\u25CC', '\u6CA1\u6709\u4E13\u6CE8\u6570\u636E',
+          '\u5B8C\u6210\u4E13\u6CE8\u540E\u4F1A\u751F\u6210\u5206\u7C7B\u5360\u6BD4\u3002')
       } else {
         Row({ space: STYLE_CONFIG.UI_CARD_GUTTER }) {
           Stack() {
@@ -6021,13 +6282,14 @@ struct ToDoList {
           .padding({ top: STYLE_CONFIG.ICON_GUTTER })
         }
         .width(Constant.PERCENT_FULL)
+        .justifyContent(FlexAlign.Center)
       }
     }
     .width(Constant.PERCENT_FULL)
-    .padding(22)
-    .borderRadius(24)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
     .backgroundColor('#FFFEFC')
-    .shadow({ radius: 18, color: '#10000000', offsetX: 0, offsetY: 7 })
+    .shadow({ radius: 10, color: UI_COLORS.CARD_SHADOW, offsetX: 0, offsetY: 4 })
   }
 
   @Builder
@@ -6050,7 +6312,7 @@ struct ToDoList {
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
-    .borderRadius(24)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
     .backgroundColor('#F7F4FF')
   }
 
@@ -6274,6 +6536,7 @@ struct ToDoList {
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
           this.studyBuddySpaceHero()
+          this.studyBuddyQuoteCard()
           this.currentOutfitCard()
           this.moRoomCard()
           this.moStageCard()
@@ -6282,6 +6545,7 @@ struct ToDoList {
         .constraintSize({ maxWidth: 560 })
         .alignSelf(ItemAlign.Start)
         Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+          this.studyBuddyTodayCard()
           this.outfitStore()
           this.moGrowthTasksCard()
           this.studyBuddyGrowthCard()
@@ -6297,6 +6561,8 @@ struct ToDoList {
     } else {
       Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
         this.studyBuddySpaceHero()
+        this.studyBuddyTodayCard()
+        this.studyBuddyQuoteCard()
         this.moGrowthTasksCard()
         this.outfitStore()
         this.moRoomCard()
@@ -6315,15 +6581,15 @@ struct ToDoList {
   getMoSceneActorSize(): number {
     let stageName = this.getMoStageName();
     if (stageName === '\u86CB' || stageName === '\u7834\u58F3') {
-      return this.isWideScreen ? 260 : 146;
+      return this.isWideScreen ? 304 : 146;
     }
     if (stageName === '\u5E7C\u5D3D') {
-      return this.isWideScreen ? 266 : 142;
+      return this.isWideScreen ? 302 : 142;
     }
     if (stageName === '\u5B66\u4E60\u4F19\u4F34') {
-      return this.isWideScreen ? 300 : 132;
+      return this.isWideScreen ? 328 : 132;
     }
-    return this.isWideScreen ? 292 : 160;
+    return this.isWideScreen ? 320 : 160;
   }
 
   @Builder
@@ -6331,23 +6597,32 @@ struct ToDoList {
     Stack({ alignContent: Alignment.Center }) {
       this.moStudyRoomBackground()
       Stack({ alignContent: Alignment.Center }) {
-        if (this.getMoStageName() === '\u86CB' || this.getMoStageName() === '\u7834\u58F3') {
-          this.moEggVisual(this.getMoSceneActorSize(), this.getMoStageName() === '\u7834\u58F3')
-        } else if (this.getMoStageName() === '\u5B66\u4E60\u4F19\u4F34') {
-          this.moSeatedBuddy(this.getMoSceneActorSize())
-        } else {
-          this.moRabbitBuddy(this.getMoSceneActorSize())
+        Stack({ alignContent: Alignment.Center }) {
+          if (this.getMoStageName() === '\u86CB' || this.getMoStageName() === '\u7834\u58F3') {
+            this.moEggVisual(this.getMoSceneActorSize(), this.getMoStageName() === '\u7834\u58F3')
+          } else if (this.getMoStageName() === '\u5B66\u4E60\u4F19\u4F34') {
+            this.moSeatedBuddy(this.getMoSceneActorSize())
+          } else {
+            this.moRabbitBuddy(this.getMoSceneActorSize())
+          }
+        }
+        .width(this.getMoSceneActorSize())
+        .height(this.getMoSceneActorSize())
+        .zIndex(2)
+        Stack() {
+          this.moSceneOutfitLayer(this.getMoSceneActorSize())
         }
       }
       .width(this.getMoSceneActorSize())
       .height(this.getMoSceneActorSize())
-      .zIndex(2)
-      Stack() {
-        this.moSceneOutfitLayer(this.getMoSceneActorSize())
-      }
-      .width(this.getMoSceneActorSize())
-      .height(this.getMoSceneActorSize())
       .zIndex(3)
+      .scale({ x: this.moSceneScale, y: this.moSceneScale })
+      .rotate({ angle: this.moSceneRotate })
+      .translate({ y: this.moSceneOffsetY })
+      .animation({ duration: 760, curve: Curve.EaseInOut })
+      .onClick(() => {
+        this.popMoScene();
+      })
     }
     .width(Constant.PERCENT_FULL)
     .height(this.getMoSceneHeight())
@@ -7366,7 +7641,7 @@ struct ToDoList {
         .fontWeight(FontWeight.Bold)
         .textAlign(TextAlign.Center)
         .width(Constant.PERCENT_FULL)
-      Text(`\u201C${this.studyBuddyReply.length > 0 ? this.studyBuddyReply : this.getMoStageMessage()}\u201D`)
+      Text(`\u201C${this.studyBuddyReply.length > 0 ? this.studyBuddyReply : this.getDailyCompanionQuote()}\u201D`)
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Medium)
@@ -7381,7 +7656,7 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        this.moRoomInfoPill('\u72B6\u6001', this.getMoTodayCompanionText())
+        this.moRoomInfoPill('\u5FC3\u60C5', this.getMoMoodName())
         this.moRoomInfoPill('\u88C5\u9970', this.getEquippedOutfitName())
       }
       .width(Constant.PERCENT_FULL)
@@ -7454,12 +7729,13 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.moStageInfo('\u5F53\u524D\u9636\u6BB5', this.getMoStageName(), UI_COLORS.PET_PURPLE)
-        this.moStageInfo('\u4E0B\u4E00\u9636\u6BB5', this.getMoNextStageName(), UI_COLORS.ORANGE)
+        this.moStageInfo('\u5F53\u524D\u9636\u6BB5', this.getMoGrowthStageName(), UI_COLORS.PET_PURPLE)
+        this.moStageInfo('\u4E0B\u4E00\u9636\u6BB5', this.getMoNextGrowthStageName(), UI_COLORS.ORANGE)
+        this.moStageInfo('\u8FD8\u5DEE\u7B49\u7EA7', this.getMoGrowthStageGap() > 0 ? `${this.getMoGrowthStageGap()}\u7EA7` : '\u5DF2\u8FBE\u6210', UI_COLORS.MINT)
       }
       .width(Constant.PERCENT_FULL)
       CommonProgressBar({ progressPercent: this.getMoStageProgress(), progressBarColor: UI_COLORS.PET_PURPLE, progressTrackColor: UI_COLORS.PINK_LIGHT })
-      Text(this.getMoNextStageText())
+      Text(this.getMoGrowthStageText())
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -7648,12 +7924,12 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       Flex({ wrap: FlexWrap.Wrap }) {
-        this.moBadgeItem('01', '\u7B2C\u4E00\u6B21\u4E13\u6CE8', this.getTotalFocusCount() >= 1)
-        this.moBadgeItem('P1', '\u4ECA\u65E5\u5B8C\u62101\u4E2A\u756A\u8304', this.todayPomodoroCount >= 1)
-        this.moBadgeItem('100', '\u7D2F\u8BA1\u4E13\u6CE8100\u5206\u949F', this.getTotalFocusMinutes() >= 100)
-        this.moBadgeItem('10', '\u5B8C\u621010\u4E2A\u4EFB\u52A1', this.getCompletedCount() >= 10)
-        this.moBadgeItem('3D', '\u8FDE\u7EED\u5B66\u4E603\u5929', this.dailyGoalStreak >= 3)
-        this.moBadgeItem('D1', '\u89E3\u9501\u7B2C\u4E00\u4E2A\u88C5\u626E', this.getOwnedOutfitCount() >= 1)
+        this.moBadgeItem('01', '\u9996\u6B21\u4E13\u6CE8', '\u756A\u8304\u22651\u6216\u4E13\u6CE8>0\u5206', this.isFirstFocusAchievementUnlocked())
+        this.moBadgeItem('10', '\u5B8C\u621010\u4E2A\u4EFB\u52A1', '\u7D2F\u8BA1\u5B8C\u6210\u226510\u4E2A', this.getCompletedCount() >= 10)
+        this.moBadgeItem('50', '\u5B8C\u621050\u4E2A\u4EFB\u52A1', '\u7D2F\u8BA1\u5B8C\u6210\u226550\u4E2A', this.getCompletedCount() >= 50)
+        this.moBadgeItem('100', '\u4E13\u6CE8100\u5206\u949F', '\u7D2F\u8BA1\u4E13\u6CE8\u2265100\u5206', this.getTotalFocusMinutes() >= 100)
+        this.moBadgeItem('3D', '\u8FDE\u7EED\u5B66\u4E603\u5929', '\u8FDE\u7EED\u5929\u6570\u22653', this.dailyGoalStreak >= 3)
+        this.moBadgeItem('D1', '\u89E3\u9501\u7B2C\u4E00\u4E2A\u88C5\u626E', '\u5DF2\u62E5\u6709\u88C5\u626E>1', this.getOwnedOutfitCount() > 1)
       }
       .width(Constant.PERCENT_FULL)
     }
@@ -7665,7 +7941,7 @@ struct ToDoList {
   }
 
   @Builder
-  moBadgeItem(iconText: string, label: string, unlocked: boolean) {
+  moBadgeItem(iconText: string, label: string, conditionText: string, unlocked: boolean) {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
       Text(iconText)
         .fontSize($r('sys.float.ohos_id_text_size_body1'))
@@ -7684,6 +7960,10 @@ struct ToDoList {
       Text(unlocked ? '\u5DF2\u83B7\u5F97' : '\u672A\u83B7\u5F97')
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(unlocked ? UI_COLORS.MINT : UI_COLORS.TEXT_WEAK)
+      Text(conditionText)
+        .fontSize(10)
+        .fontColor(UI_COLORS.TEXT_WEAK)
+        .maxLines(1)
     }
     .width('48%')
     .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
@@ -7694,25 +7974,29 @@ struct ToDoList {
 
   getMoAchievementCount(): number {
     let count = 0;
-    if (this.getTotalFocusCount() >= 1) {
-      count += 1;
-    }
-    if (this.todayPomodoroCount >= 1) {
-      count += 1;
-    }
-    if (this.getTotalFocusMinutes() >= 100) {
+    if (this.isFirstFocusAchievementUnlocked()) {
       count += 1;
     }
     if (this.getCompletedCount() >= 10) {
       count += 1;
     }
+    if (this.getCompletedCount() >= 50) {
+      count += 1;
+    }
+    if (this.getTotalFocusMinutes() >= 100) {
+      count += 1;
+    }
     if (this.dailyGoalStreak >= 3) {
       count += 1;
     }
-    if (this.getOwnedOutfitCount() >= 1) {
+    if (this.getOwnedOutfitCount() > 1) {
       count += 1;
     }
     return count;
+  }
+
+  isFirstFocusAchievementUnlocked(): boolean {
+    return this.getTotalFocusCount() >= 1 || this.getTotalFocusMinutes() > 0;
   }
 
   @Builder
@@ -7767,17 +8051,36 @@ struct ToDoList {
   @Builder
   studyBuddyTodayCard() {
     Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-      Text('\u4ECA\u65E5\u966A\u4F34')
-        .fontSize($r('sys.float.ohos_id_text_size_headline8'))
-        .fontColor(UI_COLORS.TEXT_PRIMARY)
-        .fontWeight(FontWeight.Bold)
-        .width(Constant.PERCENT_FULL)
-      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
-        this.studyBuddyMetric('\u25CC', '\u4E13\u6CE8', this.todayFocusMinutes + '\u5206', UI_COLORS.FOCUS_BLUE)
-        this.studyBuddyMetric('\u2713', '\u4EFB\u52A1', this.todayCompletedCount + '', UI_COLORS.MINT)
-        this.studyBuddyMetric('\u25B3', '\u756A\u8304', this.todayPomodoroCount + '', UI_COLORS.ORANGE)
+      Row() {
+        Text('\u4ECA\u65E5\u72B6\u6001')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(this.getMoMoodName())
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(this.getMoMoodColor())
       }
       .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.studyBuddyMetric('\u25CC', '\u4ECA\u65E5\u4E13\u6CE8', this.todayFocusMinutes + '\u5206', UI_COLORS.FOCUS_BLUE)
+        this.studyBuddyMetric('\u2713', '\u4ECA\u65E5\u5B8C\u6210', this.todayCompletedCount + '', UI_COLORS.MINT)
+        this.studyBuddyMetric('\u25B3', '\u4ECA\u65E5\u756A\u8304', this.todayPomodoroCount + '', UI_COLORS.ORANGE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+        this.currentOutfitInfo('\u4ECA\u65E5\u83B7\u5F97', `+${this.todayScoreGain}`, UI_COLORS.ORANGE)
+        this.currentOutfitInfo('\u7D2F\u8BA1\u79EF\u5206', `${this.score}`, UI_COLORS.PET_PURPLE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Text(`\u6700\u8FD1\u83B7\u5F97\uFF1A${this.recentScoreSource}`)
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(22)
@@ -7956,7 +8259,7 @@ struct ToDoList {
       this.deviceHeroCard()
       this.deliveryRecordCard()
       this.realTransferExplainCard()
-      this.deviceTestGuideCard()
+      this.deviceVerifyGuideCard()
       this.mockDeliveryNoteCard()
     }
     .width(Constant.PERCENT_FULL)
@@ -7965,7 +8268,7 @@ struct ToDoList {
   @Builder
   deviceHeroCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\uD83D\uDCF1 \u591A\u8BBE\u5907\u540C\u6B65')
+      Text('\u591A\u8BBE\u5907\u540C\u6B65')
         .fontSize($r('sys.float.ohos_id_text_size_headline7'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -7975,7 +8278,7 @@ struct ToDoList {
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
       Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
-        this.bannerPill(`\uD83D\uDCF6 ${this.discoveredDeviceCount}\u53F0\u8BBE\u5907`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
+        this.bannerPill(`${this.discoveredDeviceCount}\u53F0\u8BBE\u5907`, UI_COLORS.FOCUS_BLUE, UI_COLORS.BLUE_LIGHT)
         this.bannerPill(this.lastDeliveryType, UI_COLORS.MINT, UI_COLORS.MINT_LIGHT)
       }
       .width(Constant.PERCENT_FULL)
@@ -7989,7 +8292,7 @@ struct ToDoList {
   @Builder
   realTransferExplainCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\uD83D\uDD04 \u771F\u5B9E\u6295\u9001\u8BF4\u660E')
+      Text('\u771F\u5B9E\u6295\u9001\u8BF4\u660E')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
@@ -8017,6 +8320,7 @@ struct ToDoList {
           this.profileSettingsCard()
           this.focusPreferencesCard()
           this.profileInfoCard()
+          this.sampleDataCard()
           this.profileCrossDeviceCard()
           this.dataManagementCard()
           this.profileAboutPrivacyCard()
@@ -8042,6 +8346,7 @@ struct ToDoList {
         this.focusPreferencesCard()
         this.themeStore()
         this.profileInfoCard()
+        this.sampleDataCard()
         this.profileCrossDeviceCard()
         this.dataManagementCard()
         this.profileAboutPrivacyCard()
@@ -8901,10 +9206,7 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       if (this.getTodosByCalendarDate(this.getSelectedCalendarStart()).length === 0) {
-        Text('\u8FD9\u4E00\u5929\u8FD8\u6CA1\u6709\u622A\u6B62\u7684\u4EE3\u529E\u3002')
-          .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor(UI_COLORS.TEXT_SECONDARY)
-          .width(Constant.PERCENT_FULL)
+        this.emptyPanel('\u25CC', '\u5F53\u5929\u6CA1\u6709\u4EFB\u52A1', '\u6709\u622A\u6B62\u65E5\u671F\u7684\u4EE3\u529E\u4F1A\u663E\u793A\u5728\u8FD9\u91CC\u3002')
       }
       ForEach(this.getTodosByCalendarDate(this.getSelectedCalendarStart()), (item: ToDo) => {
         this.calendarTaskRow(item)
@@ -8937,10 +9239,7 @@ struct ToDoList {
       }
       .width(Constant.PERCENT_FULL)
       if (items.length === 0) {
-        Text('\u6682\u65E0\u4EFB\u52A1')
-          .fontSize($r('sys.float.ohos_id_text_size_body2'))
-          .fontColor(UI_COLORS.TEXT_SECONDARY)
-          .width(Constant.PERCENT_FULL)
+        this.emptyPanel('\u25CC', '\u6CA1\u6709\u8FD1\u671F\u622A\u6B62', '\u8BBE\u7F6E\u622A\u6B62\u65E5\u671F\u540E\u4F1A\u81EA\u52A8\u6C47\u603B\u3002')
       }
       ForEach(items, (item: ToDo) => {
         this.calendarTaskRow(item)
@@ -9077,12 +9376,12 @@ struct ToDoList {
   @Builder
   mockDeliveryNoteCard() {
     Column({ space: STYLE_CONFIG.ICON_GUTTER }) {
-      Text('\uD83E\uDDFE \u6A21\u62DF\u6295\u9001\u8BF4\u660E')
+      Text('\u6F14\u793A\u8BBE\u5907\u8BF4\u660E')
         .fontSize($r('sys.float.ohos_id_text_size_headline8'))
         .fontColor(UI_COLORS.TEXT_PRIMARY)
         .fontWeight(FontWeight.Bold)
         .width(Constant.PERCENT_FULL)
-      Text('\u6A21\u62DF\u8BB0\u5F55\u53EA\u4FDD\u5B58\u672C\u5730\u6587\u5B57\u8BB0\u5F55\uFF0C\u4E0D\u662F\u771F\u5B9E\u8DE8\u8BBE\u5907\u6295\u9001\u3002')
+      Text('\u6F14\u793A\u8BBE\u5907\u53EA\u4FDD\u5B58\u672C\u5730\u8BB0\u5F55\uFF0C\u4E0D\u4EE3\u8868\u771F\u5B9E\u8DE8\u8BBE\u5907\u6295\u9001\u6210\u529F\u3002')
         .fontSize($r('sys.float.ohos_id_text_size_body2'))
         .fontColor(UI_COLORS.TEXT_SECONDARY)
         .width(Constant.PERCENT_FULL)
@@ -9105,6 +9404,64 @@ struct ToDoList {
       this.deliveryStatusRow('\u65E5\u7A0B\u72B6\u6001', '\u6309\u65E5\u671F\u81EA\u52A8\u91CD\u7F6E\u756A\u8304/\u76EE\u6807\u8FDB\u5EA6')
       this.deliveryStatusRow('\u6295\u9001\u72B6\u6001', '\u6700\u8FD1\u53D1\u9001/\u63A5\u6536\u8BB0\u5F55\u4F1A\u4FDD\u5B58')
       this.deliveryStatusRow('\u5F53\u524D\u4E3B\u9898', this.themeNames[this.themeIndex])
+    }
+    .width(Constant.PERCENT_FULL)
+    .padding(STYLE_CONFIG.UI_CARD_PADDING)
+    .borderRadius(STYLE_CONFIG.UI_RADIUS_LARGE)
+    .backgroundColor(Color.White)
+    .shadow({
+      radius: 10,
+      color: UI_COLORS.CARD_SHADOW,
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  @Builder
+  sampleDataCard() {
+    Column({ space: STYLE_CONFIG.LIST_ITEM_GUTTER }) {
+      Row() {
+        Text('\u793A\u4F8B\u6570\u636E')
+          .fontSize($r('sys.float.ohos_id_text_size_headline8'))
+          .fontColor(UI_COLORS.TEXT_PRIMARY)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text(this.hasSampleData() ? '\u5DF2\u751F\u6210' : '\u53EF\u751F\u6210')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(this.hasSampleData() ? UI_COLORS.MINT : UI_COLORS.PET_PURPLE)
+      }
+      .width(Constant.PERCENT_FULL)
+      Text('\u7528\u4E8E\u5FEB\u901F\u586B\u5145\u4EFB\u52A1\u3001\u65E5\u5386\u3001\u7EDF\u8BA1\u548C\u5C0Fmo\u6210\u957F\uFF0C\u53EF\u968F\u65F6\u6E05\u7A7A\u3002')
+        .fontSize($r('sys.float.ohos_id_text_size_body2'))
+        .fontColor(UI_COLORS.TEXT_SECONDARY)
+        .width(Constant.PERCENT_FULL)
+      Row({ space: STYLE_CONFIG.ICON_GUTTER }) {
+        Text('\u751F\u6210\u793A\u4F8B\u6570\u636E')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .padding({ top: 12, bottom: 12 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor(UI_COLORS.PET_PURPLE)
+          .onClick(() => {
+            this.generateSampleData();
+          })
+        Text('\u6E05\u7A7A')
+          .fontSize($r('sys.float.ohos_id_text_size_body2'))
+          .fontColor('#D94838')
+          .fontWeight(FontWeight.Bold)
+          .textAlign(TextAlign.Center)
+          .width(92)
+          .padding({ top: 12, bottom: 12 })
+          .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
+          .backgroundColor('#FFF1F0')
+          .onClick(() => {
+            this.clearSampleData();
+          })
+      }
+      .width(Constant.PERCENT_FULL)
     }
     .width(Constant.PERCENT_FULL)
     .padding(STYLE_CONFIG.UI_CARD_PADDING)
