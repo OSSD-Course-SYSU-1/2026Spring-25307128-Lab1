@@ -1232,12 +1232,12 @@ struct ToDoList {
   }
 
   getOutfitPreviewColor(index: number): string {
-    let colors: string[] = ['#F6E6C8', '#A9D6B2', '#B9B7E8', '#F4CBB9', '#BFD6EA'];
+    let colors: string[] = ['#F6E6B2', '#DDF3E2', '#B9B7E8', '#F4CBB9', '#BFD6EA'];
     return colors[Math.max(0, index) % colors.length];
   }
 
   getOutfitScarfColor(index: number): string {
-    let colors: string[] = ['#E5B86E', '#7CB894', '#8D84CE', '#EAA679', '#7FA7C7'];
+    let colors: string[] = ['#E8C77A', '#9BCFA7', '#8D84CE', '#EAA679', '#7FA7C7'];
     return colors[Math.max(0, index) % colors.length];
   }
 
@@ -6612,6 +6612,9 @@ struct ToDoList {
         Stack() {
           this.moSceneOutfitLayer(this.getMoSceneActorSize())
         }
+        .width(this.getMoSceneActorSize())
+        .height(this.getMoSceneActorSize())
+        .zIndex(4)
       }
       .width(this.getMoSceneActorSize())
       .height(this.getMoSceneActorSize())
@@ -6872,7 +6875,6 @@ struct ToDoList {
         .backgroundColor('#F7C2C8')
         .opacity(0.75)
         .position({ x: displaySize * 0.63, y: displaySize * 0.59 })
-      this.moAnimalDecorations(displaySize)
     }
     .width(displaySize)
     .height(displaySize)
@@ -6956,26 +6958,26 @@ struct ToDoList {
         .width(displaySize * 0.16)
         .height(displaySize * 0.08)
         .borderRadius(displaySize * 0.04)
-        .border({ width: 2, color: '#4F5B66' })
+        .border({ width: 2, color: this.getOutfitScarfColor(3) })
         .position({ x: displaySize * 0.32, y: displaySize * 0.47 })
       Row()
         .width(displaySize * 0.16)
         .height(displaySize * 0.08)
         .borderRadius(displaySize * 0.04)
-        .border({ width: 2, color: '#4F5B66' })
+        .border({ width: 2, color: this.getOutfitScarfColor(3) })
         .position({ x: displaySize * 0.52, y: displaySize * 0.47 })
       Row()
         .width(displaySize * 0.06)
         .height(displaySize * 0.018)
         .borderRadius(displaySize * 0.009)
-        .backgroundColor('#4F5B66')
+        .backgroundColor(this.getOutfitScarfColor(3))
         .position({ x: displaySize * 0.47, y: displaySize * 0.5 })
     } else if (this.equippedOutfitIndex === 4) {
       Row()
         .width(displaySize * 0.18)
         .height(displaySize * 0.18)
         .borderRadius(displaySize * 0.09)
-        .backgroundColor('#F5C86B')
+        .backgroundColor(this.getOutfitPreviewColor(4))
         .border({ width: 2, color: '#FFFFFFFF' })
         .position({ x: displaySize * 0.66, y: displaySize * 0.67 })
     }
@@ -6997,35 +6999,35 @@ struct ToDoList {
         .width(displaySize * 0.42)
         .height(displaySize * 0.075)
         .borderRadius(displaySize * 0.038)
-        .backgroundColor('#D99D35')
+        .backgroundColor(this.getOutfitScarfColor(0))
         .border({ width: 2, color: '#FFFFF4D8' })
         .position({ x: displaySize * 0.29, y: displaySize * 0.6 })
       Row()
         .width(displaySize * 0.11)
         .height(displaySize * 0.07)
         .borderRadius(displaySize * 0.035)
-        .backgroundColor('#C98F30')
+        .backgroundColor(this.getOutfitScarfColor(0))
         .rotate({ angle: -10 })
         .position({ x: displaySize * 0.395, y: displaySize * 0.605 })
       Row()
         .width(displaySize * 0.11)
         .height(displaySize * 0.07)
         .borderRadius(displaySize * 0.035)
-        .backgroundColor('#D49A32')
+        .backgroundColor(this.getOutfitScarfColor(0))
         .rotate({ angle: 10 })
         .position({ x: displaySize * 0.495, y: displaySize * 0.605 })
       Row()
         .width(displaySize * 0.075)
         .height(displaySize * 0.07)
         .borderRadius(displaySize * 0.035)
-        .backgroundColor('#FFE8A8')
+        .backgroundColor(this.getOutfitPreviewColor(0))
         .position({ x: displaySize * 0.463, y: displaySize * 0.605 })
     } else if (this.equippedOutfitIndex === 1) {
       Row()
         .width(displaySize * 0.2)
         .height(displaySize * 0.2)
         .borderRadius(displaySize * 0.05)
-        .backgroundColor('#F5C86B')
+        .backgroundColor('#FFE08A')
         .border({ width: 2, color: '#FFFFFFFF' })
         .rotate({ angle: 45 })
         .position({ x: displaySize * 0.6, y: displaySize * 0.26 })
@@ -7033,49 +7035,49 @@ struct ToDoList {
         .width(displaySize * 0.24)
         .height(displaySize * 0.07)
         .borderRadius(displaySize * 0.035)
-        .backgroundColor('#8D84CE')
+        .backgroundColor(this.getOutfitScarfColor(1))
         .position({ x: displaySize * 0.5, y: displaySize * 0.39 })
     } else if (this.equippedOutfitIndex === 2) {
       Row()
         .width(displaySize * 0.22)
         .height(displaySize * 0.26)
         .borderRadius(displaySize * 0.07)
-        .backgroundColor('#7CB894')
+        .backgroundColor(this.getOutfitPreviewColor(2))
         .border({ width: 2, color: '#FFFFFFFF' })
         .position({ x: displaySize * 0.68, y: displaySize * 0.54 })
       Row()
         .width(displaySize * 0.08)
         .height(displaySize * 0.16)
         .borderRadius(displaySize * 0.04)
-        .backgroundColor('#5F9C78')
+        .backgroundColor(this.getOutfitScarfColor(2))
         .position({ x: displaySize * 0.73, y: displaySize * 0.58 })
     } else if (this.equippedOutfitIndex === 3) {
       Row()
         .width(displaySize * 0.17)
         .height(displaySize * 0.08)
         .borderRadius(displaySize * 0.04)
-        .border({ width: 2, color: '#4F5B66' })
+        .border({ width: 2, color: this.getOutfitScarfColor(3) })
         .backgroundColor('#22FFFFFF')
         .position({ x: displaySize * 0.31, y: displaySize * 0.44 })
       Row()
         .width(displaySize * 0.17)
         .height(displaySize * 0.08)
         .borderRadius(displaySize * 0.04)
-        .border({ width: 2, color: '#4F5B66' })
+        .border({ width: 2, color: this.getOutfitScarfColor(3) })
         .backgroundColor('#22FFFFFF')
         .position({ x: displaySize * 0.52, y: displaySize * 0.44 })
       Row()
         .width(displaySize * 0.06)
         .height(displaySize * 0.018)
         .borderRadius(displaySize * 0.009)
-        .backgroundColor('#4F5B66')
+        .backgroundColor(this.getOutfitScarfColor(3))
         .position({ x: displaySize * 0.47, y: displaySize * 0.475 })
     } else if (this.equippedOutfitIndex === 4) {
       Row()
         .width(displaySize * 0.18)
         .height(displaySize * 0.18)
         .borderRadius(displaySize * 0.09)
-        .backgroundColor('#F5C86B')
+        .backgroundColor(this.getOutfitPreviewColor(4))
         .border({ width: 2, color: '#FFFFFFFF' })
         .position({ x: displaySize * 0.62, y: displaySize * 0.5 })
       Text('A')
@@ -7090,46 +7092,33 @@ struct ToDoList {
   moBuddyOutfitDecoration(displaySize: number) {
     if (this.equippedOutfitIndex === 0) {
       Row()
-        .width(displaySize * 0.12)
-        .height(displaySize * 0.07)
-        .borderRadius(displaySize * 0.035)
-        .backgroundColor('#D99D35')
+        .width(displaySize * 0.3)
+        .height(displaySize * 0.075)
+        .borderRadius(displaySize * 0.038)
+        .backgroundColor(this.getOutfitScarfColor(0))
         .border({ width: 2, color: '#FFFFF4D8' })
-        .rotate({ angle: -10 })
-        .position({ x: displaySize * 0.385, y: displaySize * 0.62 })
+        .position({ x: displaySize * 0.35,
+          y: this.getMoStageName() === '\u5B66\u4E60\u4F19\u4F34' ? displaySize * 0.66 : displaySize * 0.76 })
       Row()
-        .width(displaySize * 0.12)
-        .height(displaySize * 0.07)
-        .borderRadius(displaySize * 0.035)
-        .backgroundColor('#C98F30')
-        .border({ width: 2, color: '#FFFFF4D8' })
-        .rotate({ angle: 10 })
-        .position({ x: displaySize * 0.495, y: displaySize * 0.62 })
-      Row()
-        .width(displaySize * 0.07)
-        .height(displaySize * 0.065)
-        .borderRadius(displaySize * 0.032)
-        .backgroundColor('#D49A32')
-        .border({ width: 2, color: '#FFFFF4D8' })
-        .position({ x: displaySize * 0.465, y: displaySize * 0.623 })
-      Row()
-        .width(displaySize * 0.035)
-        .height(displaySize * 0.05)
-        .borderRadius(displaySize * 0.017)
-        .backgroundColor('#FFE8A8')
-        .position({ x: displaySize * 0.482, y: displaySize * 0.632 })
+        .width(displaySize * 0.2)
+        .height(displaySize * 0.025)
+        .borderRadius(displaySize * 0.013)
+        .backgroundColor(this.getOutfitPreviewColor(0))
+        .opacity(0.55)
+        .position({ x: displaySize * 0.4,
+          y: this.getMoStageName() === '\u5B66\u4E60\u4F19\u4F34' ? displaySize * 0.674 : displaySize * 0.774 })
     } else if (this.equippedOutfitIndex === 1) {
       Stack() {
         Row()
           .width(displaySize * 0.32)
           .height(displaySize * 0.12)
           .borderRadius(displaySize * 0.06)
-          .backgroundColor('#8D84CE')
+          .backgroundColor(this.getOutfitScarfColor(1))
         Row()
           .width(displaySize * 0.1)
           .height(displaySize * 0.1)
           .borderRadius(displaySize * 0.025)
-          .backgroundColor('#F5C86B')
+          .backgroundColor('#FFE08A')
           .border({ width: 1, color: '#FFFFFFFF' })
           .rotate({ angle: 45 })
           .position({ x: displaySize * 0.12, y: displaySize * 0.01 })
@@ -7142,14 +7131,14 @@ struct ToDoList {
         .width(displaySize * 0.24)
         .height(displaySize * 0.3)
         .borderRadius(displaySize * 0.07)
-        .backgroundColor('#7CB894')
+        .backgroundColor(this.getOutfitPreviewColor(2))
         .border({ width: 2, color: '#FFFFFFFF' })
         .position({ x: displaySize * 0.64, y: displaySize * 0.58 })
       Row()
         .width(displaySize * 0.07)
         .height(displaySize * 0.18)
         .borderRadius(displaySize * 0.035)
-        .backgroundColor('#5F9C78')
+        .backgroundColor(this.getOutfitScarfColor(2))
         .position({ x: displaySize * 0.69, y: displaySize * 0.62 })
     } else if (this.equippedOutfitIndex === 3) {
       Row()
@@ -8547,7 +8536,7 @@ struct ToDoList {
         .width(Constant.PERCENT_FULL)
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(this.focusRoomNames, (themeName: string, index: number) => {
-          this.focusPreferencePill(themeName, index === this.focusThemeIndex, this.focusRoomAccentColors[index], () => {
+          this.focusPreferencePill(themeName, index, 'theme', this.focusRoomAccentColors[index], () => {
             this.focusThemeIndex = index;
             this.saveAppState();
           })
@@ -8560,7 +8549,7 @@ struct ToDoList {
         .width(Constant.PERCENT_FULL)
       Flex({ wrap: FlexWrap.Wrap }) {
         ForEach(this.focusClockStyleNames, (styleName: string, index: number) => {
-          this.focusPreferencePill(styleName, index === this.focusClockStyleIndex, UI_COLORS.FOCUS_BLUE, () => {
+          this.focusPreferencePill(styleName, index, 'clock', UI_COLORS.FOCUS_BLUE, () => {
             this.focusClockStyleIndex = index;
             this.saveAppState();
           })
@@ -8575,10 +8564,11 @@ struct ToDoList {
   }
 
   @Builder
-  focusPreferencePill(label: string, isSelected: boolean, selectedColor: ResourceColor, action: () => void) {
+  focusPreferencePill(label: string, index: number, preferenceType: string, selectedColor: ResourceColor, action: () => void) {
     Text(label)
       .fontSize($r('sys.float.ohos_id_text_size_body2'))
-      .fontColor(isSelected ? Color.White : UI_COLORS.TEXT_SECONDARY)
+      .fontColor((preferenceType === 'theme' ? index === this.focusThemeIndex :
+        index === this.focusClockStyleIndex) ? Color.White : UI_COLORS.TEXT_SECONDARY)
       .padding({
         left: STYLE_CONFIG.LIST_ITEM_GUTTER,
         right: STYLE_CONFIG.LIST_ITEM_GUTTER,
@@ -8587,7 +8577,8 @@ struct ToDoList {
       })
       .margin({ right: STYLE_CONFIG.ICON_GUTTER, bottom: STYLE_CONFIG.ICON_GUTTER })
       .borderRadius(STYLE_CONFIG.UI_RADIUS_PILL)
-      .backgroundColor(isSelected ? selectedColor : Color.White)
+      .backgroundColor((preferenceType === 'theme' ? index === this.focusThemeIndex :
+        index === this.focusClockStyleIndex) ? selectedColor : Color.White)
       .onClick(action)
   }
 
